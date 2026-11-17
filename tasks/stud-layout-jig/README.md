@@ -1,68 +1,94 @@
-# Seat studs in a framing layout jig
+# Frame a short wall section: set three studs on their layout marks and screw each through the bottom plate
 
-A plywood layout jig lies between the arms, with a 2x4 end fence across its far side and four slots, 12 inches on
-centre, each formed by a pair of short cleats standing at the fence. Four loose 2x4 studs (38 x 89 x 368 mm) stand on
-edge nearby: two on the plywood near the middle, one on the table beside each side of the jig. Every stud has to end up
-on edge in its own slot, flat on the plywood and tight against the fence. The slots leave 3 mm per side, so a stud
-has to arrive nearly square and on centre; the cleat tops are rounded over toward the slot, so a stud set down slightly
-off centre slides in.
+One task file, `stud_layout_jig.py`, for the `yam_arena` embodiment of `yam-isaac-lab-arena` on Dream Labs' station
+scene, with its screw model `screw_runtime.py` and the shared compound-part helper `yam_parts.py`.
+A short wall section is framed flat on a framing table, as carpenters frame walls on the deck: two 2x4 plates stand
+on edge a stud's length plus 6 mm apart, each marked for three studs 16 in on centre.
+The robot sets each 12 in stud on edge between the plates on its marks, then takes up a cordless impact driver and
+drives the screw already started through the bottom plate at that mark into the stud's end, drawing the stud tight
+to the plate, until the screw's head is flush.
+
+## Requirements
+
+- `yam-isaac-lab-arena` installed with its `setup.sh` (Isaac Lab-Arena, `inspect-robots` and `inspect-robots-yam`),
+  or the Robocurve Brev launchable; a Dream API key in `~/.dreamlabs/credentials` for the Dream-1 run.
+- No third-party assets: every object is a primitive (boxes, cylinders and spheres) defined in the task files.
 
 ## Run a trial
-On a machine set up with the official simulator (the Robocurve Brev launchable, or `yam-isaac-lab-arena`'s
-`setup.sh`), with a Dream API key in `~/.dreamlabs/credentials`:
+
+From this folder, with 20 Hz control:
 
 ```bash
 # Dream-1
 inspect-robots run --embodiment yam_arena --policy dream \
   -E task=stud_layout_jig.py -E object_jitter=0 -E control_hz=20 -E cam_width=320 -E cam_height=176 \
-  --instruction "Seat the four 2x4 studs on edge in the layout jig, tight against the end fence." \
-  --scorer task_score --max-steps 2400 --store-frames --log-dir ~/yam-eval/stud-layout-jig-dream
+  --instruction "Frame the wall section: stand each stud on edge between the plates on its layout marks, then drive the screw at its mark through the bottom plate into the stud's end with an impact driver until the head is flush." \
+  --scorer task_score --max-steps 2400 --store-frames --log-dir ~/yam-eval/stud-wall-dream
 
-# The scripted demo, which reaches full score
-inspect-robots run --embodiment yam_arena --policy yam_scripted \
-  -E task=stud_layout_jig.py -E object_jitter=0 -E control_hz=20 -E cam_width=320 -E cam_height=176 \
-  --instruction "Seat the four 2x4 studs on edge in the layout jig, tight against the end fence." \
-  --scorer task_score --max-steps 2400 --store-frames --log-dir ~/yam-eval/stud-layout-jig-demo
+# The scripted demo (full score): the same command with
+#   --policy yam_scripted --log-dir ~/yam-eval/stud-wall-demo
 
 # One MP4 per camera, next to each run's frames
-for log in ~/yam-eval/stud-layout-jig-dream/*.json; do inspect-robots video "$log"; done
+for log in ~/yam-eval/stud-wall-*/*.json; do inspect-robots video "$log"; done
 ```
 
-The run prints `task_score` at the end. The trial ends with 1.0 when `success()` has held for 1 s; otherwise it scores
-`score()` at the last step.
+If the machine has a desktop display that Isaac Sim can't open an OpenGL context on (`GLXBadFBConfig` at startup),
+run with `DISPLAY` unset (`env -u DISPLAY inspect-robots run ...`); the runs are headless.
 
-The scripted demo is open loop and uses only fixed constants. Each arm handles the two slots on its side: it picks a
-stud by its top edge, carries it over the slot, lowers it to just above the cleats, slides it forward until its end
-presses on the fence, and lets go. The stud drops into the slot (the rounded cleat tops steer it in), and the arm then
-pushes the stud's near end with closed fingers to close the last few millimetres to the fence.
+## Score
 
-The scoring and the demo can be checked without the simulator:
+`--scorer task_score` gives 1.0 when the task succeeds (all three studs fastened, both hands at least 3 cm from every
+stud, held for 1 s) and otherwise the task file's `score()` at the end of the trial. The rules are in `task.json`
+and in the file's scoring section; in short, each stud scores up to 1/3 on its own and each mark credits at most one
+stud:
+
+| Credit | Condition | Check on a real framing table |
+|---|---|---|
+| 0.10 placed | on edge between the plates (upright within 3 degrees), square to the plates within 3 degrees, bottom within 3 mm of the plywood, centre line within 4 mm of the centre of its marks | tape measure across the marks; a speed square |
+| 0.10 caught | its screw has gone into the stud's end | the stud can no longer be lifted out |
+| 0.133 fastened | the screw driven home, its head within 1 mm of flush with the plate, and the stud's end tight to the bottom plate | a straightedge across the plate's face, or a 1 mm feeler gauge that will not go under the head's edge; a 1 mm feeler gauge does not go into the joint |
+
+A screw driven with no stud on its marks catches nothing. A stud anywhere else (lying flat, on the stops' tops, off
+its marks, tilted, turned or on the table) scores 0. In simulation the trial is voided (scores 0) if a stud is
+missing, a pose is not finite, a rotation is not unit length, or a stud's reported outline doesn't match a
+38 x 89 x 305 mm box.
+
+The scoring, the screw model and the demo's reach can be checked without the simulator (40 checks):
 
 ```bash
 python -m pytest -q test_stud_layout_jig.py
 ```
 
-## Scoring
-Each stud scores on its own, and each slot counts for at most one stud.
-
-| Score per stud | Condition | Check on a real table |
-|---|---|---|
-| 0.25 | seated (below) and its end within 2 mm of the fence face | a 2 mm feeler gauge doesn't enter between the stud's end and the fence |
-| 0.15 | seated, but its end more than 2 mm from the fence | |
-| 0 | anything else: lying flat, resting on the cleat tops, beside or behind a slot, tilted, turned or on the table | |
-
-A stud is **seated** in a slot when it stands on edge (its 89 mm face upright within 3 degrees), its length is square
-to the fence within 3 degrees, its bottom is within 3 mm of the plywood, its centre line where it passes the cleats is
-within 4 mm of the slot's centre line (it is between that slot's cleats), at least 76 mm of its length (half the cleat
-length) is between the cleats, and it is still. A real check: the stud sits flat on the plywood between the cleats, a
-square against the fence reads within 3 degrees, and a ruler shows at least 76 mm of the stud inside the cleats.
-
-The trial's score is the sum over the four studs, up to 1.0; 1.0 requires all four seated and within 2 mm of the
-fence for 1 s. In simulation the trial is voided (scores 0) if a stud is missing, a pose is not finite, a rotation is
-not unit length, or a stud's reported outline doesn't match a 38 x 89 x 368 mm box.
-
 ## Runtime and seeds
-- The scripted demo seats all four studs and the trial ends with success at about 37 s of simulated time: three
-  trials back to back took 742, 741 and 745 steps, all scoring 1.0. The three trials, including starting Isaac Sim,
-  took 7 minutes on one GPU. A full 2,400-step trial with Dream-1, including start-up, took about 7 minutes.
-- One fixed layout: `-E object_jitter=0`, so the seed doesn't change the start.
+
+- Run limit: 2,400 control steps at 20 Hz (2 minutes).
+- The scripted demo (`demo()`): the left arm sets the left stud, the right arm the middle stud and then the right
+  one; then each arm takes up its impact driver, drives the screws at its studs (the left arm one, the right arm two)
+  and lifts the driver clear. The plans last 50 s (left arm) and 94.5 s (right arm); the trial reached 1.0 and
+  ended as a success at step 1,812 (90.6 s of simulated time). On an RTX 5080 a trial took about 10 minutes of
+  wall-clock time, startup included.
+- No randomness: the layout is fixed (`-E object_jitter=0`), so no seed is needed.
+
+## How the files work
+
+- **The screws** (`screw_runtime.py`). PhysX cannot cut a thread into wood, so each screw is a rigid body the model
+  holds on its axis and moves only as it is driven. A screw goes in, at up to 25 mm/s, only while an impact driver's
+  #2 square bit is in its head (its tip within 3 mm of the screw's axis, its axis within 8 degrees) and that driver's
+  trigger is squeezed; once in the wood its thread draws it in, so the hand has to follow the head to keep the bit
+  in it. As the screw's tip leaves the plate it catches the stud whose end is there (square to the plate, the screw
+  at least 6 mm inside the end's edges) and draws that end tight to the plate. A screw driven with no stud there
+  holds nothing. The model runs before every physics substep and applies its forces through Isaac Lab, after the
+  screw model of the repository's lever-set task (`tasks/fit-lever-set-to-bored-door/lockset_runtime.py`).
+- **The trigger.** The drivers are held by their grips from above, the pads closing on the grip's front (the trigger)
+  and back. A firm hold (pads driven 8 mm into the grip) carries a driver; a squeeze (13 mm) pulls the trigger. The
+  model reads each gripper's commanded and actual opening to tell them apart.
+- **Compound parts.** The task-file API has boxes, spheres and upright cylinders, so the plates (with their pilot
+  holes), screws, drivers and rests are `yam_parts.Part`s, from the repository's shared helper, copied unchanged.
+- **Reads in the demo.** Carried in one hand, a stud sags and tips in the grip by more than the 3 mm the plates and
+  stops leave, and a driver sags by more than its bit can miss a screw's head by. So the demo reads the stud's or the
+  driver's pose at fixed points and moves the hand to correct it, as scripted demos may: over each slot, above the
+  plates, just above the stops and between the plates before letting go of a stud; and before and while driving
+  each screw.
+- **Tilted grips.** With the hand straight down the arms cannot lift a stud clear of the plates, so the demo tips the
+  fingertips 30 degrees along the stud; `yam_arena.demo.grip_rotation` is wrapped to take a full rotation for such
+  waypoints, and every other waypoint is unchanged.

@@ -1,50 +1,47 @@
-"""On the station table: a framing layout jig and four loose 2x4 cripple studs.
+"""On the station table: a short wall section to frame on a framing table, three loose 2x4 studs and two cordless
+impact drivers.
 
-The jig is a 3/4-inch plywood base with a 2x4 end fence standing on edge across its far side (away from the
-arms). Four slots are laid out 12 inches on centre across the jig. Each slot is a pair of 3/4 x 1-1/2-inch
-cleats, 6 inches long, standing at the fence. The gap between each pair is 44.1 mm, so a 2x4 (38.1 mm thick)
-fits with 3 mm to spare on each side. The top of each cleat is rounded over toward its slot with a
-3/4-inch (19 mm) radius, so a board set down on a cleat's edge can slide off it into the slot.
+Carpenters frame walls lying flat on the deck or on a framing table: the plates are laid out with a pencil mark at
+every stud, each stud is set on edge between the plates on its marks, and it is fastened through the plate into its
+end. Here two 2x4 plates stand on edge on a 3/4-inch plywood board, a stud's length plus 6 mm apart: the bottom plate
+on the arms' side, the top plate on the far side. Both carry layout marks for three studs, 16 inches on centre, and
+the table has a pair of pine stops beside each mark at the top plate (3/4 x 1-1/2 x 6 inches, rounded over toward
+the gap, 3 mm of clearance each side of a stud). At each mark a #10 x 3-inch screw with a #2 square-drive head sits
+in a clearance hole through the bottom plate, its tip flush with the plate's inner face and its head standing
+1-1/2 inches proud.
 
-The four studs are surfaced 2x4 lumber (1-1/2 x 3-1/2 inches actual, cut to 14-1/2 inches, about 0.56 kg).
-They start standing on edge and a little off square. Two are staged on the plywood in the open strip between
-the two middle slots, and one stands on the table beside each side of the jig.
+The three studs are surfaced 2x4s (1-1/2 x 3-1/2 inches actual) cut to 12 inches, about 0.47 kg. They start standing
+on edge on the table beside the framing table, a little off square: one on the left, two on the right. A compact
+12 V impact driver for each hand lies on its side on a rest in front of the table.
 
-Goal: seat every stud on edge in its own slot, flat on the plywood, and tight against the end fence.
+Goal: stand each stud on edge between the plates on its marks, then drive the screw at its mark through the bottom
+plate into the stud's end until the head is flush.
 
-Run the scripted demo:
-    inspect-robots run --embodiment yam_arena --policy yam_scripted \\
-        -E task=stud_layout_jig.py \\
-        -E object_jitter=0 -E control_hz=20 -E cam_width=320 -E cam_height=176 \\
-        --instruction "seat the four 2x4 studs on edge in the layout jig, tight against the end fence" \\
-        --scorer task_score --max-steps 1000 --store-frames \\
-        --log-dir ~/yam-eval/stud-layout-jig -E headless=false
-
-The scripted plan is open loop and uses only the fixed constants in this file, so run it with
-``-E object_jitter=0``. Each arm seats the two slots on its own side. For each stud, the arm grips the top of the
-stud across its 38 mm thickness, turns it square to the slot, and carries it over the slot about 10 mm short of
-the fence. It lowers the stud until it is just above the cleats, slides it forward until its end presses against
-the fence, and lets go. The stud drops into the slot, the rounded cleat tops steer it in, and its end slides down
-the fence face. Landing can nudge the stud a few millimetres back, so the arm then comes down behind the stud's
-near end with the fingers closed and gives it a short push until it stops against the fence.
-
-Fidelity notes. The lumber, plywood, cleats and fence are boxes at their real dimensions. Lumber density is taken
-as about 450 kg/m^3 (spruce-pine-fir). The platform has no tilted or curved shapes, so each cleat's rounded top is
-built from a row of overlapping spheres on a lower box. The spheres also bulge about 19 mm past each cleat's outer
-face, away from its slot. Left out: wood grain, the eased (rounded) edges of real dimensional lumber, and nailing.
-This task covers layout only; fastening is a separate step. Every free object has the platform's fixed friction
-(about 1.2), which is higher than wood on wood (about 0.4-0.5); a board only slides on the steepest part of the
-rounded cleat tops. The slots are spaced at 12 inches on centre rather than 16, because four slots at 16 inches
-do not fit the table. 12 inches is also a standard framing spacing.
+Fidelity notes. The lumber, plywood, plates and stops are boxes at their real sizes; the screws and the drivers are
+built from boxes and cylinders (yam_parts). Lumber density is taken as about 450 kg/m^3 (spruce-pine-fir). The
+platform has no tilted or curved shapes, so each stop's rounded top is a row of overlapping spheres on a lower box;
+the spheres also bulge about 19 mm past each stop's outer face, away from its gap. The screws are our model
+(screw_runtime), not PhysX threads. Left out: wood grain, the eased edges of real dimensional lumber, the second
+screw a framer would drive at each stud end, and the top plate's screws (driven from the table's far side, out of
+the arms' reach). Every free object has the platform's fixed friction (about 1.2), higher than wood on wood
+(about 0.4-0.5).
 """
 
 import math
+import pathlib
+import sys
 
 import numpy as np
 
-from yam_arena.constants import FINGER_CLOSED, FINGER_OPEN, PAD_TIP_PAST_TCP
-from yam_arena.demo import Waypoint
-from yam_arena.task_file import TABLE_TOP, Box, Sphere
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import screw_runtime as SR  # noqa: E402
+from yam_parts import Part, box, cyl  # noqa: E402
+from yam_arena.constants import FINGER_CLOSED, FINGER_OPEN, PAD_TIP_PAST_TCP  # noqa: E402
+import yam_arena.demo as motion  # noqa: E402
+from yam_arena.demo import Waypoint  # noqa: E402
+from yam_arena import ik  # noqa: E402
+from yam_arena.urdf import axis_angle_matrix  # noqa: E402
+from yam_arena.task_file import TABLE_TOP, Box, Sphere  # noqa: E402
 
 SCENE = "station"
 TOP = TABLE_TOP[SCENE]
@@ -53,12 +50,13 @@ INCH = 0.0254
 # -- lumber (ALSC PS 20 dressed sizes) --------------------------------------------------
 STUD_THICK = 1.5 * INCH  # 38.1 mm, across the slot (y when seated)
 STUD_DEPTH = 3.5 * INCH  # 88.9 mm, vertical when on edge
-STUD_LENGTH = 14.5 * INCH  # 368.3 mm, along the slot (x when seated)
+STUD_LENGTH = 12.0 * INCH  # 304.8 mm cripple studs, along the slot (x when seated); short, so every grip on them
+# is near enough the arms to hold them firmly
 WOOD_DENSITY = 450.0  # kg/m^3, spruce-pine-fir near 12 % moisture
-STUD_MASS = WOOD_DENSITY * STUD_THICK * STUD_DEPTH * STUD_LENGTH  # ~0.56 kg
+STUD_MASS = WOOD_DENSITY * STUD_THICK * STUD_DEPTH * STUD_LENGTH  # ~0.46 kg
 STUD_COLOR = (0.87, 0.76, 0.56)
 
-# -- jig -------------------------------------------------------------------------------
+# -- jig and plates --------------------------------------------------------------------
 PLY_THICK = 0.75 * INCH  # 19.05 mm
 CLEAT_W = 0.75 * INCH  # 19.05 mm across y
 CLEAT_H = 1.5 * INCH  # 38.1 mm tall, to the top of the rounded cap
@@ -66,27 +64,100 @@ CLEAT_L = 6.0 * INCH  # 152.4 mm along x
 ROUND_R = CLEAT_W  # roundover radius: the cap curves from the cleat's outer edge down to its slot-side face
 CLEAT_BOX_H = CLEAT_H - ROUND_R  # the square lower part of the cleat, 19.05 mm
 ROUND_SPHERES = 16  # spheres per cleat; ~9 mm apart, so the ridges between them are ~0.5 mm
-# 3 mm per side: the fallback agreed before building. At 1.5 mm a stud cocked more than ~1.1 degrees touched both
-# cleats and wedged when pushed; at 3 mm that takes ~2.3 degrees.
+# 3 mm per side: at 1.5 mm a stud cocked more than ~1.1 degrees touched both cleats and wedged when pushed; at 3 mm
+# that takes ~2.3 degrees.
 SLOT_CLEARANCE = 0.003  # per side
 SLOT_W = STUD_THICK + 2 * SLOT_CLEARANCE  # 44.1 mm
-ON_CENTRE = 12.0 * INCH  # 304.8 mm
-SLOT_Y = (-1.5 * ON_CENTRE, -0.5 * ON_CENTRE, 0.5 * ON_CENTRE, 1.5 * ON_CENTRE)
+ON_CENTRE = 16.0 * INCH  # 406.4 mm
+SLOT_Y = (-ON_CENTRE, 0.0, ON_CENTRE)  # stud centre lines, right to left
+
+PLATE_T = STUD_THICK  # a 2x4 plate on edge: 38.1 mm along x
+PLATE_H = STUD_DEPTH  # 88.9 mm tall
+PLATE_LEN = 2 * ON_CENTRE + STUD_THICK  # 33-1/2 in: flush with the outer faces of the end studs
+END_CLEARANCE = 0.006  # the plates stand this much more than a stud length apart (3 mm at each end when centred),
+# so a stud lowered between them clears both; the screw then draws it tight to the bottom plate
+# The bottom plate is as close to the arms as the screwdriver allows: driving a screw whose head stands 1-1/2 in
+# proud puts the hand on the impact driver's handle about 0.11 m nearer the arms than the head (checked offline by
+# IK), and the driver's motor housing about 0.17 m nearer; 30 mm farther out keeps the housing clear of the arms' bases
+# at the outer screws.
+BOTTOM_PLATE_INNER_X = 0.256  # a stud tight to the bottom plate has its near end here
+BOTTOM_PLATE_OUTER_X = BOTTOM_PLATE_INNER_X - PLATE_T
+TOP_PLATE_FACE_X = BOTTOM_PLATE_INNER_X + STUD_LENGTH + END_CLEARANCE  # the top plate's inner face
+PLATE_COLOR = (0.70, 0.56, 0.36)
+MARK_W, MARK_H = 0.0015, 0.0005  # pencil lines on the plates' top edges, at each stud's two faces
+MARK_COLOR = (0.15, 0.15, 0.15)
 
 BASE_TOP = TOP + PLY_THICK
-FENCE_FACE_X = 0.56  # the fence face the stud ends butt against (keeps every grip within the arms' reach)
-FENCE_T = STUD_THICK  # a 2x4 on edge: 38.1 mm along x
-FENCE_H = STUD_DEPTH  # 88.9 mm tall
-CLEAT_NEAR_X = FENCE_FACE_X - CLEAT_L
-JIG_NEAR_X = 0.12
-JIG_FAR_X = FENCE_FACE_X + FENCE_T
+CLEAT_NEAR_X = TOP_PLATE_FACE_X - CLEAT_L
+JIG_NEAR_X = BOTTOM_PLATE_OUTER_X - 0.020
+JIG_FAR_X = TOP_PLATE_FACE_X + PLATE_T
 JIG_HALF_Y = max(abs(y) for y in SLOT_Y) + SLOT_W / 2 + 2 * CLEAT_W + 0.015
 PLY_COLOR = (0.80, 0.66, 0.44)
 CLEAT_COLOR = (0.62, 0.47, 0.28)
-FENCE_COLOR = (0.70, 0.56, 0.36)
 
-SEATED_X = FENCE_FACE_X - STUD_LENGTH / 2
+# -- screws: #10 x 3 in construction screws, started through the bottom plate ----------
+SCREW_LEN = 3.0 * INCH  # 76.2 mm, head underside to tip
+SCREW_Z = BASE_TOP + STUD_DEPTH / 2  # on the stud's end, at mid-depth
+SHANK_R = 0.0024  # #10: 4.8 mm
+HEAD_R, HEAD_T = 0.0049, 0.003  # 9.8 mm head (estimate), 3 mm thick
+SCREW_PROUD = SCREW_LEN - PLATE_T  # the started screw's tip is flush with the plate's inner face: 38.1 mm proud
+SCREW_HEAD_X = BOTTOM_PLATE_INNER_X - SCREW_LEN  # the head's underside when started
+SCREW_SEATED_X = BOTTOM_PLATE_OUTER_X  # the head's underside when driven home
+HOLE_HALF = 0.003  # the plate's pilot hole, 6 mm square in the simulation
+STEEL = (0.65, 0.65, 0.68)
+SCREW_COLOR = (0.10, 0.10, 0.11)  # black-coated structural framing screws (they show against the pine plates)
+
+# -- impact driver: a compact 12 V cordless impact driver with a 2 Ah battery (estimates from typical models) ------
+# Frame: origin at the bit's tip, +x the bit's direction, the pistol grip toward +y (the driver is used, and lies,
+# on its side, so the grip and battery stay clear of the plywood with the bit at a stud's mid-depth).
+BIT_LEN, BIT_R = 0.025, 0.0032  # 1/4 in hex insert bit, #2 square tip, 25 mm out of the chuck
+CHUCK = (0.020, 0.0105)  # length, radius
+HOUSING = (0.120, 0.056, 0.056)  # motor and hammer housing behind the chuck
+HANDLE_DEPTH, HANDLE_LEN, HANDLE_T = 0.045, 0.100, 0.034  # front (trigger) to back, along the grip, across it
+BATTERY = (0.105, 0.044, 0.072)
+HOUSING_X = -(BIT_LEN + CHUCK[0] + HOUSING[0] / 2)
+HANDLE_X = -(BIT_LEN + CHUCK[0] + 0.065)  # the grip hangs from the rear of the housing
+HANDLE_Y = HOUSING[1] / 2 + HANDLE_LEN / 2  # the grip's middle
+DRIVER_MASS = 0.95  # kg, with its battery
+REST_H = BATTERY[2] / 2 - HOUSING[2] / 2  # the rest under the housing, so it lies level on housing and battery
+BLACK, ORANGE, BLUE = (0.08, 0.08, 0.08), (0.90, 0.40, 0.10), (0.20, 0.35, 0.75)
+
+SEATED_X = BOTTOM_PLATE_INNER_X + STUD_LENGTH / 2  # a stud's centre, tight to the bottom plate
 SEATED_Z = BASE_TOP + STUD_DEPTH / 2
+
+
+def _bottom_plate():
+    """The bottom plate, with a pilot hole at each mark for its screw (the screws' shanks pass through it)."""
+    cx = BOTTOM_PLATE_OUTER_X + PLATE_T / 2
+    half = PLATE_LEN / 2
+    shapes = []
+    edges = [-half]
+    for y in SLOT_Y:
+        edges += [y - HOLE_HALF, y + HOLE_HALF]
+    edges.append(half)
+    for y0, y1 in zip(edges[0::2], edges[1::2]):  # solid stretches between the holes
+        shapes.append(box((0.0, (y0 + y1) / 2, 0.0), (PLATE_T, y1 - y0, PLATE_H)))
+    for y in SLOT_Y:  # above and below each hole
+        h = PLATE_H / 2 - HOLE_HALF
+        for sz in (-1, 1):
+            shapes.append(box((0.0, y, sz * (HOLE_HALF + h / 2)), (PLATE_T, 2 * HOLE_HALF, h)))
+    return Part("bottom_plate", (cx, 0.0, BASE_TOP + PLATE_H / 2), shapes, color=PLATE_COLOR)
+
+
+def _marks():
+    parts = []
+    for plate, cx in (("bottom", BOTTOM_PLATE_OUTER_X + PLATE_T / 2), ("top", TOP_PLATE_FACE_X + PLATE_T / 2)):
+        for i, y in enumerate(SLOT_Y, start=1):
+            for side, sign in (("a", -1.0), ("b", 1.0)):
+                parts.append(
+                    Box(
+                        f"mark_{plate}_{i}{side}",
+                        pos=(cx, y + sign * STUD_THICK / 2, BASE_TOP + PLATE_H + MARK_H / 2),
+                        size=(PLATE_T, MARK_W, MARK_H),
+                        color=MARK_COLOR,
+                    )
+                )
+    return parts
 
 
 def _jig():
@@ -97,20 +168,22 @@ def _jig():
             size=(JIG_FAR_X - JIG_NEAR_X, 2 * JIG_HALF_Y, PLY_THICK),
             color=PLY_COLOR,
         ),
+        _bottom_plate(),
         Box(
-            "end_fence",
-            pos=(FENCE_FACE_X + FENCE_T / 2, 0.0, BASE_TOP + FENCE_H / 2),
-            size=(FENCE_T, 2 * JIG_HALF_Y, FENCE_H),
-            color=FENCE_COLOR,
+            "top_plate",
+            pos=(TOP_PLATE_FACE_X + PLATE_T / 2, 0.0, BASE_TOP + PLATE_H / 2),
+            size=(PLATE_T, PLATE_LEN, PLATE_H),
+            color=PLATE_COLOR,
         ),
+        *_marks(),
     ]
-    cleat_x = FENCE_FACE_X - CLEAT_L / 2
+    cleat_x = TOP_PLATE_FACE_X - CLEAT_L / 2
     box_offset = SLOT_W / 2 + CLEAT_W / 2
     # Sphere centres run along the cleat's outer top edge at the top of the square part, so each sphere meets the
     # slot-side face tangentially at that height and the slot keeps its full width all the way down.
     round_offset = SLOT_W / 2 + CLEAT_W
     round_z = BASE_TOP + CLEAT_BOX_H
-    round_xs = np.linspace(CLEAT_NEAR_X, FENCE_FACE_X - ROUND_R, ROUND_SPHERES)
+    round_xs = np.linspace(CLEAT_NEAR_X, TOP_PLATE_FACE_X - ROUND_R, ROUND_SPHERES)
     for i, y in enumerate(SLOT_Y, start=1):
         for side, sign in (("a", -1.0), ("b", 1.0)):
             parts.append(
@@ -133,13 +206,54 @@ def _jig():
     return parts
 
 
-# Starting layout, all on edge and turned a little off square (x, y, yaw, bottom height). Two studs are staged
-# on the plywood in the open strip between the inner slots. One stands on the table beside each side of the jig.
+def make_screw(i, y):
+    """A started screw, its frame at the head's underside on the screw's axis, +x its direction of travel. Only
+    the head and the shank between the head and the plate are colliders; the rest of the shank (in the plate and,
+    once driven, in the stud) is not simulated. screw_runtime holds it on its axis and moves it as it is driven."""
+    shapes = [
+        cyl((-HEAD_T / 2, 0.0, 0.0), HEAD_R, HEAD_T, "x", STEEL),
+        cyl((SCREW_PROUD / 2, 0.0, 0.0), SHANK_R, SCREW_PROUD, "x", STEEL),
+    ]
+    return Part(f"screw_{i}", (SCREW_HEAD_X, y, SCREW_Z), shapes, mass=0.02, color=SCREW_COLOR)
+
+
+def make_driver(pos, name="driver_right"):
+    """An impact driver, lying on its side: bit, chuck, housing, pistol grip (front face: the trigger) and battery."""
+    s = [cyl((-BIT_LEN / 2, 0.0, 0.0), BIT_R, BIT_LEN, "x", STEEL),
+         cyl((-(BIT_LEN + CHUCK[0] / 2), 0.0, 0.0), CHUCK[1], CHUCK[0], "x", BLACK),
+         box((HOUSING_X, 0.0, 0.0), HOUSING, ORANGE),
+         box((HANDLE_X, HANDLE_Y, 0.0), (HANDLE_DEPTH, HANDLE_LEN, HANDLE_T), BLACK),
+         box((HANDLE_X + 0.005, HOUSING[1] / 2 + HANDLE_LEN + BATTERY[1] / 2, 0.0), BATTERY, BLACK)]
+    return Part(name, pos, s, mass=DRIVER_MASS, color=ORANGE, friction=(0.60, 0.50), contact_offset=0.001,
+                grip=3)
+
+
+# The hand holds the grip level with the driver's centre of mass (uniform density, as PhysX takes it), so the
+# driver hangs balanced in a sideways grip instead of rolling in the pads.
+DRIVER_GRIP = (HANDLE_X, float(make_driver((0.0, 0.0, 0.0)).volume_centroid()[1]), 0.0)
+# Each hand has its own driver, on its own rest (bit tips given): neither arm can reach the other's driving poses
+# with the same hold on the grip (checked offline by IK), so they cannot share one.
+DRIVER_STARTS = {
+    "left": (0.10 - DRIVER_GRIP[0], 0.44 - DRIVER_GRIP[1], TOP + BATTERY[2] / 2),  # the grip at (0.10, 0.44), clear
+    # of the left arm's base (at 0.06, 0.36 the driver lay against it and the hand could not reach round the grip)
+    "right": (0.05 - DRIVER_GRIP[0], 0.0 - DRIVER_GRIP[1], TOP + BATTERY[2] / 2),  # the grip at (0.05, 0.00)
+}
+DRIVER_NAMES = {"left": "driver_left", "right": "driver_right"}
+
+
+def make_rest(arm):
+    """A low block under a driver's housing, so it lies level on its side on the housing and the battery."""
+    x, y, _ = DRIVER_STARTS[arm]
+    return Part(f"rest_{arm}", (x + HOUSING_X, y, TOP), [box((0.0, 0.0, REST_H / 2), (HOUSING[0] - 0.02, 0.040, REST_H))],
+                color=BLUE)
+
+
+# Starting layout, all on edge on the table beside the jig and turned a little off square (x, y, yaw, bottom
+# height). The table ends at y = +-0.65 m; the two on the right stand ~31 mm apart, room for a finger between them.
 START = {
-    "stud_1": (0.30, 0.585, -0.10, TOP),
-    "stud_2": (0.36, 0.05, 0.08, BASE_TOP),
-    "stud_3": (0.36, -0.05, -0.06, BASE_TOP),
-    "stud_4": (0.30, -0.585, 0.12, TOP),
+    "stud_1": (0.30, 0.585, -0.06, TOP),
+    "stud_2": (0.30, -0.53, 0.03, TOP),
+    "stud_3": (0.30, -0.61, -0.03, TOP),
 }
 STUDS = tuple(
     Box(
@@ -152,19 +266,40 @@ STUDS = tuple(
     )
     for name, (x, y, yaw, bottom) in START.items()
 )
-OBJECTS = [*_jig(), *STUDS]
+SCREWS = tuple(make_screw(i, y) for i, y in enumerate(SLOT_Y, start=1))
+DRIVERS = tuple(make_driver(DRIVER_STARTS[arm], DRIVER_NAMES[arm]) for arm in ("left", "right"))
+OBJECTS = [*_jig(), *SCREWS, make_rest("left"), make_rest("right"), *STUDS, *DRIVERS]
+PRESSED_PARTS = tuple(DRIVER_NAMES.values())  # the pads squeeze its grip; advisory offline, as in the lever-set task
+
+# The screw model's geometry (screw_runtime).
+SR.SCREW_STARTS = tuple((SCREW_HEAD_X, y, SCREW_Z) for y in SLOT_Y)
+SR.SCREW_PROUD = SCREW_PROUD
+SR.PLATE_INNER_X = BOTTOM_PLATE_INNER_X
+SR.STUDS = tuple(s.name for s in STUDS)
+SR.STUD_HALF = (STUD_LENGTH / 2, STUD_THICK / 2, STUD_DEPTH / 2)
+SR.DRIVER_GRIP = DRIVER_GRIP
+SR.HANDLE_DEPTH = HANDLE_DEPTH
+SR.HEAD_T = HEAD_T
+SR.DRIVERS = tuple(DRIVER_NAMES.values())
+SR.NAMES = (*SR.DRIVERS, *SR.STUDS, *(s.name for s in SCREWS))
+SR.MODEL.clear()
 
 # -- scoring -------------------------------------------------------------------------------
-SEAT_CREDIT = 0.15
-FLUSH_CREDIT = 0.10
+# Each stud scores up to 1/3, on its own; each mark (slot) credits at most one stud.
+PLACED_CREDIT = 0.10  # on edge between the plates, on its marks, square
+CAUGHT_CREDIT = 0.10  # its screw has gone into the stud's end
+FASTENED_CREDIT = 1.0 / 3.0 - PLACED_CREDIT - CAUGHT_CREDIT  # screw driven home, stud tight to the bottom plate
+FLUSH_TOLERANCE = 0.001  # a screw is driven home when its head is within 1 mm of flush with the plate (a straightedge
+# across the plate's face, or a 1 mm feeler gauge that will not go under the head's edge)
 HEIGHT_TOLERANCE = 0.003  # bottom on the plywood
-ANGLE_TOLERANCE = math.radians(3)  # upright on edge, and square to the fence
-FLUSH_TOLERANCE = 0.002  # end against the fence face
-MIN_ENGAGEMENT = CLEAT_L / 2  # the stud runs at least this far between its cleats
-SLOT_SLACK = 0.001  # allowance past the cleat faces
+ANGLE_TOLERANCE = math.radians(3)  # upright on edge, and square to the plates
+MARK_TOLERANCE = 0.004  # the stud's centre line from the centre of its marks (a tape measure)
+TIGHT_TOLERANCE = 0.001  # the stud's end against the bottom plate (a 1 mm feeler gauge does not go in)
+RELEASE_CLEAR = 0.030  # every hand at least this far from every stud for full credit
 QUAT_NORM_TOLERANCE = 1e-3
 OUTLINE_TOLERANCE = 0.002  # built box vs the spec, per axis
 STUD_HALF = np.array([STUD_LENGTH, STUD_THICK, STUD_DEPTH]) / 2
+TEST_SCREWS = None  # offline fixtures set the screws' state: [(caught stud or None, depth driven in m), ...]
 
 
 def _finite(state) -> bool:
@@ -187,7 +322,7 @@ def _rotation(state) -> np.ndarray:
 
 def _valid(objects) -> bool:
     """Fail-safe: every stud is present with finite values and a unit quaternion, and its built outline (the
-    world-aligned box the simulator reports) matches a 1-1/2 x 3-1/2 x 14-1/2-inch box at its pose."""
+    world-aligned box the simulator reports) matches a 1-1/2 x 3-1/2 x 12-inch box at its pose."""
     for stud in STUDS:
         state = objects.get(stud.name)
         if state is None or not _finite(state):
@@ -206,56 +341,98 @@ def _axes(state):
 
 
 def _slot_of(state):
-    """The index of the slot this stud is seated in, or None."""
+    """The index of the mark this stud stands on, on edge between the plates and square to them, or None."""
     long_axis, depth_axis = _axes(state)
     upright = abs(depth_axis[2]) >= math.cos(ANGLE_TOLERANCE)
     square = abs(long_axis[0]) >= math.cos(ANGLE_TOLERANCE)
     on_base = abs(float(state.low[2]) - BASE_TOP) <= HEIGHT_TOLERANCE
-    engaged = float(state.high[0]) >= FENCE_FACE_X - CLEAT_L + MIN_ENGAGEMENT
-    if not (upright and square and on_base and engaged and state.resting()):
+    between = float(state.low[0]) >= BOTTOM_PLATE_INNER_X - 0.001 and float(state.high[0]) <= TOP_PLATE_FACE_X + 0.001
+    if not (upright and square and on_base and between):
         return None
-    # Where the stud's centreline crosses the middle of the cleats; it must lie between that slot's cleat faces.
-    cleat_mid_x = FENCE_FACE_X - CLEAT_L / 2
-    centre_y = float(state.pos[1]) + long_axis[1] / long_axis[0] * (cleat_mid_x - float(state.pos[0]))
     for index, slot_y in enumerate(SLOT_Y):
-        if abs(centre_y - slot_y) <= SLOT_CLEARANCE + SLOT_SLACK:
+        if abs(float(state.pos[1]) - slot_y) <= MARK_TOLERANCE:
             return index
     return None
 
 
-def _flush(state) -> bool:
-    return abs(float(state.high[0]) - FENCE_FACE_X) <= FLUSH_TOLERANCE
+def _tight(state) -> bool:
+    return float(state.low[0]) - BOTTOM_PLATE_INNER_X <= TIGHT_TOLERANCE
+
+
+def _screws():
+    """Per screw (by mark): the stud it caught (or None) and how far it has been driven in (m)."""
+    if TEST_SCREWS is not None:
+        return TEST_SCREWS
+    m = SR.MODEL
+    return [(m.caught[i], m.advance[i]) for i in range(len(SLOT_Y))]
+
+
+def _home(depth: float) -> bool:
+    """The screw's head within FLUSH_TOLERANCE of flush with the plate."""
+    return depth >= SCREW_PROUD - FLUSH_TOLERANCE
 
 
 def _results(objects):
-    """(seated, flush) per stud, each slot credited to at most one stud."""
+    """(placed, caught, fastened) per stud, each mark credited to at most one stud."""
+    screws = _screws()
     used = set()
     out = []
     for stud in STUDS:
         state = objects[stud.name]
         slot = _slot_of(state)
         if slot is None or slot in used:
-            out.append((False, False))
+            out.append((False, False, False))
             continue
         used.add(slot)
-        out.append((True, _flush(state)))
+        caught_by, depth = screws[slot]
+        caught = caught_by == stud.name
+        out.append((True, caught, caught and _home(depth) and _tight(state)))
     return out
 
 
+def _hands():
+    """Each arm's TCP on the simulator, or None offline."""
+    env = _RUN["env"] if "_RUN" in globals() else None
+    if env is None:
+        return None
+    try:
+        base = env.unwrapped
+        origin = SR._np(base.scene.env_origins)[0][:3]
+        return [tcp for tcp, _, _ in SR._grips(base, origin).values()]
+    except Exception as e:  # noqa: BLE001
+        print(f"HANDS_READ failed: {e!r}", flush=True)
+        return None
+
+
+def _released(objects) -> bool:
+    hands = _hands()
+    if hands is None:
+        return True  # offline the arms are not known: assumed clear
+    for stud in STUDS:
+        st = objects[stud.name]
+        low, high = np.asarray(st.low), np.asarray(st.high)
+        for tcp in hands:
+            if np.linalg.norm(np.maximum(np.maximum(low - tcp, tcp - high), 0.0)) < RELEASE_CLEAR:
+                return False
+    return True
+
+
 def score(objects):
-    """0.15 per stud seated on edge in its own slot, plus 0.10 more when that stud is also tight to the fence."""
+    """Per stud: 0.10 placed on its marks, 0.10 more once its screw has caught it, 0.133 more once the screw is
+    seated with the stud tight to the bottom plate (1/3 per stud)."""
     if not _valid(objects):
         return 0.0
-    return float(sum(SEAT_CREDIT * seated + FLUSH_CREDIT * flush for seated, flush in _results(objects)))
+    total = sum(PLACED_CREDIT * p + CAUGHT_CREDIT * c + FASTENED_CREDIT * f for p, c, f in _results(objects))
+    return float(min(1.0, total))
 
 
 def success(objects):
-    """All four studs are seated on edge in separate slots and tight against the end fence."""
-    return _valid(objects) and all(seated and flush for seated, flush in _results(objects))
+    """All three studs on their marks and fastened, and the hands clear of them."""
+    return _valid(objects) and all(f for _, _, f in _results(objects)) and _released(objects)
 
 
 def distance(objects):
-    """Mean distance from each stud's centre to the nearest seated position, in metres."""
+    """Mean distance from each stud's centre to the nearest fastened position, in metres."""
     if not _valid(objects):
         return float("inf")
     targets = [np.array([SEATED_X, y, SEATED_Z]) for y in SLOT_Y]
@@ -265,72 +442,366 @@ def distance(objects):
 
 
 # -- scripted demo ------------------------------------------------------------------------
-GRIP_DEPTH = 0.035  # pad tips this far below the stud's top edge (16 mm above the cleats when seated)
-TRAVEL_Z = TOP + 0.15  # a carried stud's bottom clears the cleat tops by about 26 mm
-SHORT_OF_FENCE = 0.010  # the stud is lowered over its slot this far back from the fence
+# With the hand straight down, the arms cannot lift a stud clear of the plates (checked offline by IK: the hand
+# reaches at most 0.11-0.17 m above the table over the slots, and needs ~0.19 m). Tipping the fingertips 30 degrees
+# toward the top plate, about the fingers' closing axis, lets it reach 0.23 m or more everywhere the demo goes, the
+# centre slot's stud held at its middle included (15 degrees reached it only 113 mm off its middle, where the stud
+# swung down in the pads on the simulator). The
+# standard waypoint only turns a straight-down hand about the vertical, so, as the lever-set task does, the demo's grip_rotation
+# is replaced by one that also takes a full rotation.
+TILT = math.radians(30.0)
+GRIP_DEPTH = 0.050  # pad tips this far below the stud's top edge (deep, for a firm hold on its faces)
+PLATE_CLEAR = 0.020  # a carried stud's bottom clears the plates' top edges by this much
 DROP_GAP = 0.005  # the stud is let go with its bottom this far above the cleat tops
-# Before letting go, the held stud (still above the cleats, so nothing drags on it) is slid forward until its far
-# end meets the fence. The slide is commanded this far past the fence so the springy arm ends pressing the stud
-# against it. A stud pushed a long way along the slot after the drop can bind between the cleats instead of sliding.
-FENCE_PRESS = 0.020  # the springy arm lagged up to ~13 mm short of an 8 mm press in physics
-# Landing on the rounded cleat tops can nudge the stud a few millimetres back off the fence, so after the drop the
-# closed fingers give its near end a short push. The stud is already square in its slot by then; a long, hard push
-# on a stud cocked more than ~1.1 degrees wedges it between the cleats instead.
-PUSH_BEHIND = 0.040  # the closed fingers come down this far behind the seated near end
-PUSH_PAST = 0.030  # and push to this far past it; the fence stops the stud and the springy arm presses it there
-PUSH_TIP_HEIGHT = 0.035  # finger tips this far above the plywood while pushing
-ASSIGNMENT = {  # stud -> (arm, slot index), in order per arm; the arms work the centre strip at different times
-    "stud_1": ("left", 3),
-    "stud_2": ("left", 2),
-    "stud_3": ("right", 1),
-    "stud_4": ("right", 0),
+PLACE_X = BOTTOM_PLATE_INNER_X + END_CLEARANCE / 2 + STUD_LENGTH / 2  # centred between the plates
+ASSIGNMENT = {  # stud -> (arm, slot index), in order per arm
+    "stud_1": ("left", 2),
+    "stud_2": ("right", 1),  # the right arm seats the centre stud first, so it never carries a stud over a seated one
+    "stud_3": ("right", 0),
 }
 
 
-def _tcp_z(bottom_z: float) -> float:
-    return bottom_z + STUD_DEPTH - GRIP_DEPTH + PAD_TIP_PAST_TCP
+class GripOrientation(float):
+    """A grip's closing azimuth (what a plain waypoint's yaw holds) carrying the full rotation for IK, as in the lever-set task."""
+
+    def __new__(cls, matrix):
+        closure = np.asarray(matrix, float)[:, 0]
+        obj = super().__new__(cls, math.atan2(-closure[0], closure[1]))
+        obj.matrix = np.asarray(matrix, float).copy()
+        return obj
 
 
-LOWER_X = SEATED_X - SHORT_OF_FENCE
-FENCE_X = SEATED_X + FENCE_PRESS
-SEATED_NEAR_END = FENCE_FACE_X - STUD_LENGTH
+_original_grip_rotation = getattr(motion.grip_rotation, "_original", motion.grip_rotation)
 
 
-def _seat_waypoints(stud: Box, slot_y: float) -> list[Waypoint]:
+def grip_rotation(yaw=0.0):
+    matrix = getattr(yaw, "matrix", None)
+    if isinstance(matrix, np.ndarray) and matrix.shape == (3, 3):
+        return matrix
+    return _original_grip_rotation(yaw)
+
+
+grip_rotation._original = _original_grip_rotation
+motion.grip_rotation = grip_rotation
+
+
+def tilted(yaw: float) -> GripOrientation:
+    """A downward grip turned ``yaw`` about the vertical, its fingertips tipped TILT along the stud (toward +x when
+    yaw is 0); the fingers still close across the stud's thickness."""
+    z_axis, y_axis = np.array((0.0, 0.0, 1.0)), np.array((0.0, 1.0, 0.0))
+    R = axis_angle_matrix(z_axis, yaw) @ axis_angle_matrix(y_axis, -TILT) @ _original_grip_rotation(0.0)
+    return GripOrientation(R)
+
+
+def _tcp(grip_xy, yaw: float, bottom_z: float):
+    """The TCP that puts the pad tips at ``grip_xy`` (on the stud's centre line), GRIP_DEPTH below the top edge of a
+    stud whose bottom is at ``bottom_z``. The tilt moves the tips TILT-wise ahead of the TCP along the stud."""
+    ahead = PAD_TIP_PAST_TCP * math.sin(TILT)
+    x = grip_xy[0] - ahead * math.cos(yaw)
+    y = grip_xy[1] - ahead * math.sin(yaw)
+    return (x, y, bottom_z + STUD_DEPTH - GRIP_DEPTH + PAD_TIP_PAST_TCP * math.cos(TILT))
+
+
+PLATE_TOP = BASE_TOP + PLATE_H
+TRAVEL_BOTTOM = PLATE_TOP + PLATE_CLEAR
+ENTRY_BOTTOM = PLATE_TOP + 0.005  # just above the plates' top edges: the last read before going down between them
+DROP_BOTTOM = BASE_TOP + CLEAT_H + DROP_GAP  # just above the cleats: the last read before going down into the slot
+# Let go of in mid-air, a stud was dragged ~15 mm sideways by the opening pads (one lets go before the other) and
+# landed on a cleat. So the stud is lowered all the way into its slot, the cleats either side of it, before the
+# fingers open.
+RELEASE_BOTTOM = BASE_TOP + 0.002
+# The hand holds each stud this far from its middle toward the bottom plate, so that with the stud in its slot the
+# tilted fingertips stay short of the cleats (which start 3 mm from the stud's middle) as they open.
+GRIP_BACK = 0.025
+# Carried in one hand, a stud sags and tips in the grip (on the simulator: ~30 mm low, 12-18 mm short of the top
+# plate, 12-17 mm to the right and tipped ~6 degrees), more than the 3 mm the plates and cleats leave. So, as the lever-set task's
+# demo does, the hand reads the stud's pose over its slot and moves so the stud is square and where it should be:
+# twice above the plates, once more just above them, and once between them before letting go. A camera sees the same.
+MAX_SHIFT = 0.040  # m, the most the reads may move the hand from the plan
+MAX_TURN = math.radians(15.0)
+
+
+def _run_context():
+    """Keeps the live environment where the demo can read the studs' poses (as the lever-set task's _run_context does)."""
+    context = {"env": None}
+    try:
+        from yam_arena import inspect_embodiment as _ie
+    except ImportError:
+        return context
+    cls = _ie.YamArenaEmbodiment
+    if hasattr(cls, "_rc_run_studs"):
+        return cls._rc_run_studs
+    original_step, original_reset = cls._task_step, cls.reset
+
+    def task_step(self, *args, **kwargs):
+        context["env"] = self._env
+        return original_step(self, *args, **kwargs)
+
+    def reset(self, *args, **kwargs):
+        SR.MODEL.clear()
+        result = original_reset(self, *args, **kwargs)
+        SR.MODEL.clear()  # whatever the settle steps did, every trial starts with the screws as started
+        context["env"] = self._env
+        try:
+            SR.install(self._env)
+        except Exception as e:  # noqa: BLE001
+            print(f"SCREW_HOOK failed: {e!r}", flush=True)
+        return result
+
+    cls._rc_run_studs = context
+    cls._task_step, cls.reset = task_step, reset
+    return context
+
+
+_RUN = _run_context()
+
+
+def _stud_now(name):
+    """The stud's state on the simulator now, or None offline."""
+    if _RUN["env"] is None:
+        return None
+    try:
+        from yam_arena import scene
+
+        return scene.object_states(_RUN["env"], [name])[name]
+    except Exception as e:  # noqa: BLE001
+        print(f"STUD_READ failed: {e!r}", flush=True)
+        return None
+
+
+def _turn_angle(R) -> float:
+    return math.acos(max(-1.0, min(1.0, (float(np.trace(R)) - 1.0) / 2.0)))
+
+
+def _squaring(R_stud):
+    """The rotation that turns the stud square to the plates and upright (either end may face the top plate)."""
+    turned = axis_angle_matrix(np.array((0.0, 0.0, 1.0)), math.pi)
+    fix = min((np.eye(3) @ R_stud.T, turned @ R_stud.T), key=_turn_angle)
+    angle = _turn_angle(fix)
+    return fix if angle <= MAX_TURN else ik.slerp_matrix(np.eye(3), fix, MAX_TURN / angle)
+
+
+class Lazy(motion.Waypoint):
+    """A waypoint whose target is worked out when the arm first reaches it, so it can use a read (as in the lever-set task)."""
+
+    def __init__(self, duration, where, finger, label):
+        super().__init__(duration, (0.0, 0.0, 0.0), finger, label, 0.0)
+        self._where, self._resolved = where, None
+
+    def _resolve(self):
+        if self._resolved is None:
+            p, R = self._where()
+            self._resolved = (tuple(float(v) for v in p), GripOrientation(R))
+        return self._resolved
+
+    @property
+    def pos(self):
+        return self._resolve()[0]
+
+    @pos.setter
+    def pos(self, value):
+        pass
+
+    @property
+    def yaw(self):
+        return self._resolve()[1]
+
+    @yaw.setter
+    def yaw(self, value):
+        pass
+
+
+def _seat_waypoints(stud: Box, slot: int) -> list[Waypoint]:
     sx, sy, sz = stud.pos
-    pick_z = _tcp_z(sz - STUD_DEPTH / 2)
-    drop_z = _tcp_z(BASE_TOP + CLEAT_H + DROP_GAP)
-    behind_x = SEATED_NEAR_END - PUSH_BEHIND
-    pushed_x = SEATED_NEAR_END + PUSH_PAST
-    push_z = BASE_TOP + PUSH_TIP_HEIGHT + PAD_TIP_PAST_TCP
-    # yaw 0 closes the fingers along world y; a stud with yaw psi needs its thickness axis across the fingers.
-    grip_yaw = stud.yaw
+    yaw = stud.yaw
+    slot_y = SLOT_Y[slot]
+    pick_xy = (sx - GRIP_BACK * math.cos(yaw), sy - GRIP_BACK * math.sin(yaw))  # near the middle, its balance point
+    place_xy = (PLACE_X - GRIP_BACK, slot_y)
+    bottom = sz - STUD_DEPTH / 2
+    pick_up, pick = _tcp(pick_xy, yaw, TRAVEL_BOTTOM), _tcp(pick_xy, yaw, bottom)
+    at_pick, at_place = tilted(yaw), tilted(0.0)
+    fix = {"dp": np.zeros(3), "R": np.eye(3)}  # the reads' correction to the planned hand pose, for this stud
+
+    def at(stud_bottom):
+        """The hand pose that holds the stud over its slot with its bottom at ``stud_bottom``, read corrections in."""
+        return lambda: (np.asarray(_tcp(place_xy, 0.0, stud_bottom)) + fix["dp"], fix["R"] @ at_place.matrix)
+
+    def read(stud_bottom, label):
+        def where():
+            plan = np.asarray(_tcp(place_xy, 0.0, stud_bottom))
+            hand = plan + fix["dp"]
+            st = _stud_now(stud.name)
+            if st is not None:
+                centre = np.asarray(st.pos, float)
+                turn = _squaring(_rotation(st))
+                goal = np.array((PLACE_X, slot_y, stud_bottom + STUD_DEPTH / 2))
+                # turn the hand (and the stud in it) about the stud's centre, then move that centre onto the goal
+                moved = goal + turn @ (hand - centre)
+                fix["dp"] = np.clip(moved - plan, -MAX_SHIFT, MAX_SHIFT)
+                fix["R"] = turn @ fix["R"]
+                err = (centre - goal) * 1000
+                print(f"STUD_READ {stud.name} {label}: off by x {err[0]:+.1f} y {err[1]:+.1f} z {err[2]:+.1f} mm, "
+                      f"turned {math.degrees(_turn_angle(turn)):.1f} deg", flush=True)
+            return at(stud_bottom)()
+
+        return where
+
     return [
-        Waypoint(1.5, (sx, sy, TRAVEL_Z), FINGER_OPEN, "over the stud", grip_yaw),
-        Waypoint(1.5, (sx, sy, pick_z), FINGER_OPEN, "descend", grip_yaw),
-        Waypoint(0.8, (sx, sy, pick_z), FINGER_CLOSED, "close", grip_yaw),
-        Waypoint(1.5, (sx, sy, TRAVEL_Z), FINGER_CLOSED, "lift", grip_yaw),
-        Waypoint(2.0, (LOWER_X, slot_y, TRAVEL_Z), FINGER_CLOSED, "carry and square up", 0.0),
-        Waypoint(1.5, (LOWER_X, slot_y, drop_z), FINGER_CLOSED, "just above the cleats", 0.0),
-        Waypoint(1.2, (FENCE_X, slot_y, drop_z), FINGER_CLOSED, "slide up against the fence", 0.0),
-        Waypoint(0.5, (FENCE_X, slot_y, drop_z), FINGER_CLOSED, "hold against the fence", 0.0),
-        Waypoint(0.5, (FENCE_X, slot_y, drop_z), FINGER_OPEN, "drop it into the slot", 0.0),
-        Waypoint(1.0, (FENCE_X, slot_y, TRAVEL_Z), FINGER_OPEN, "up", 0.0),
-        Waypoint(1.2, (behind_x, slot_y, TRAVEL_Z), FINGER_CLOSED, "behind the near end", 0.0),
-        Waypoint(1.0, (behind_x, slot_y, push_z), FINGER_CLOSED, "down to push height", 0.0),
-        Waypoint(3.0, (pushed_x, slot_y, push_z), FINGER_CLOSED, "nudge it to the fence", 0.0),
-        Waypoint(0.5, (pushed_x, slot_y, push_z), FINGER_CLOSED, "hold against the fence", 0.0),
-        # Back straight off at push height before lifting, so the fingers do not drag up the stud's end face.
-        Waypoint(1.0, (behind_x, slot_y, push_z), FINGER_CLOSED, "back off", 0.0),
-        Waypoint(1.0, (behind_x, slot_y, TRAVEL_Z), FINGER_CLOSED, "retreat", 0.0),
+        Waypoint(1.5, pick_up, FINGER_OPEN, "over the stud", at_pick),
+        Waypoint(1.5, pick, FINGER_OPEN, "descend", at_pick),
+        Waypoint(0.8, pick, FINGER_CLOSED, "close", at_pick),
+        Waypoint(1.5, _tcp(pick_xy, yaw, bottom + 0.030), FINGER_CLOSED, "lift off the table", at_pick),
+        Waypoint(1.5, pick_up, FINGER_CLOSED, "lift above the plates' height", at_pick),
+        Waypoint(2.5, _tcp(place_xy, 0.0, TRAVEL_BOTTOM), FINGER_CLOSED, "carry over the plates and square up",
+                 at_place),
+        Waypoint(0.8, _tcp(place_xy, 0.0, TRAVEL_BOTTOM), FINGER_CLOSED, "settle", at_place),
+        Lazy(1.0, read(TRAVEL_BOTTOM, "over the slot"), FINGER_CLOSED, "line the stud up over its slot"),
+        Lazy(0.8, at(TRAVEL_BOTTOM), FINGER_CLOSED, "settle"),
+        Lazy(0.8, read(TRAVEL_BOTTOM, "over the slot, again"), FINGER_CLOSED, "line it up again"),
+        Lazy(1.5, at(ENTRY_BOTTOM), FINGER_CLOSED, "down to the plates' top edges"),
+        Lazy(0.6, at(ENTRY_BOTTOM), FINGER_CLOSED, "settle"),
+        Lazy(0.8, read(ENTRY_BOTTOM, "at the plates' edges"), FINGER_CLOSED, "line it up with the gap"),
+        Lazy(2.0, at(DROP_BOTTOM), FINGER_CLOSED, "lower between the plates"),
+        Lazy(0.6, at(DROP_BOTTOM), FINGER_CLOSED, "steady"),
+        Lazy(0.6, read(DROP_BOTTOM, "between the plates"), FINGER_CLOSED, "line it up over the cleats"),
+        Lazy(1.5, at(RELEASE_BOTTOM), FINGER_CLOSED, "lower it into the slot"),
+        Lazy(0.5, at(RELEASE_BOTTOM), FINGER_CLOSED, "steady"),
+        Lazy(0.8, at(RELEASE_BOTTOM), FINGER_OPEN, "let go"),
+        Lazy(1.5, at(TRAVEL_BOTTOM), FINGER_OPEN, "up"),
     ]
 
 
+# -- driving the screws ---------------------------------------------------------------------
+# The hand holds the impact driver by its grip from above, the pads closing on the grip's front (the trigger) and
+# back. A firm hold (pads driven 8 mm into the grip) carries it; a squeeze (pads driven fully closed) pulls the
+# trigger. As with the studs, the hand reads where the bit is before going in, and lines it up with the screw.
+FINGER_HOLD = -(HANDLE_DEPTH - 0.008) / 2  # each finger's position: the pads 8 mm inside the grip's faces
+# The squeeze that pulls the trigger: the pads 13 mm inside the grip's faces, ~33 N a finger. Closing the gripper
+# fully drove both fingers to their 50 N limit, and two fingers pushing at their limit leave the driver free to slide
+# between them along the bit's axis (the hand lost the bit and it slid off the head).
+FINGER_SQUEEZE = -(HANDLE_DEPTH - 0.013) / 2
+GRIP_DZ = 0.005  # the TCP above the grip's centre line (pad tips 8 mm below it)
+DRIVE_YAW = {"left": math.pi / 2, "right": math.pi / 2}  # hand straight down, pads closing along x
+APPROACH = 0.008  # the bit's tip this far short of the screw's head while it is lined up
+# The hand follows the head in to 1 mm short of seated, reading only across the screw's axis on the way: pushed past
+# seated, the driver buckled off a head that was nearly home.
+PRESS = -0.001
+DRIVE_S = 4.0  # time to drive a screw home (the screw takes ~1.5 s at the driver's speed)
+READ_GAIN = 0.6  # each read of the driver applies this share of the error it finds,
+READ_TURN = math.radians(5.0)  # and turns the hand at most this much (near the edge of the arms' reach, a full
+# correction overshot: the right arm ended 11 mm and 9 degrees off after three reads)
+SCREW_ORDER = {"left": (2,), "right": (1, 0)}  # the marks whose screws each arm drives, in order
+
+
+def _face(slot: int, seated: bool = False) -> np.ndarray:
+    """The centre of a screw head's face, as started or seated."""
+    x = (SCREW_SEATED_X if seated else SCREW_HEAD_X) - HEAD_T
+    return np.array((x, SLOT_Y[slot], SCREW_Z))
+
+
+def _bit_turn(R_driver):
+    """The smallest turn that lines the bit (the driver's x axis) up with the screws' axis (+x), at most MAX_TURN;
+    the driver's roll about the bit does not matter."""
+    a, b = R_driver[:, 0], np.array((1.0, 0.0, 0.0))
+    v = np.cross(a, b)
+    s = float(np.linalg.norm(v))
+    if s < 1e-9:
+        return np.eye(3)
+    angle = min(math.atan2(s, float(a @ b)), MAX_TURN)
+    return axis_angle_matrix(v / s, angle)
+
+
+def _drive_waypoints(arm: str, slots, yaw: float) -> list[Waypoint]:
+    press = PRESS
+    fix = {"dp": np.zeros(3), "R": np.eye(3)}  # the reads' correction to the planned hand pose
+    grip_local = np.asarray(DRIVER_GRIP) + np.array((0.0, 0.0, GRIP_DZ))
+    up = np.array((0.0, 0.0, 0.06))
+    rest_tip = np.asarray(DRIVER_STARTS[arm])
+    driver = DRIVER_NAMES[arm]
+    hand_rot = _original_grip_rotation(yaw)
+
+    def plan(tip):
+        return np.asarray(tip, float) + grip_local  # the driver square, as it lies on its rest
+
+    def at(tip):
+        return lambda: (plan(tip) + fix["dp"], fix["R"] @ hand_rot)
+
+    def read(tip, label, sideways_only=False):
+        def where():
+            hand = plan(tip) + fix["dp"]
+            st = _stud_now(driver)
+            if st is not None:
+                full = _bit_turn(st.rotation())
+                angle = _turn_angle(full)
+                share = min(READ_GAIN, READ_TURN / angle) if angle > 1e-9 else READ_GAIN
+                turn = ik.slerp_matrix(np.eye(3), full, share)
+                tip_now = np.asarray(st.origin, float)
+                moved = np.asarray(tip, float) + turn @ (hand - tip_now)  # turn about the bit's tip, then move it
+                wanted = moved - plan(tip)
+                if sideways_only:  # while driving: keep the bit on the screw's axis, leave the push alone
+                    wanted[0] = fix["dp"][0]
+                fix["dp"] = np.clip(fix["dp"] + READ_GAIN * (wanted - fix["dp"]), -MAX_SHIFT, MAX_SHIFT)
+                fix["R"] = turn @ fix["R"]
+                err = (tip_now - np.asarray(tip)) * 1000
+                print(f"DRIVER_READ {label}: bit tip off by x {err[0]:+.1f} y {err[1]:+.1f} z {err[2]:+.1f} mm, "
+                      f"bit turned {math.degrees(_turn_angle(turn)):.1f} deg", flush=True)
+            return at(tip)()
+
+        return where
+
+    wps = [
+        Waypoint(2.0, tuple(plan(rest_tip) + up), FINGER_OPEN, "over the impact driver", yaw),
+        Waypoint(1.5, tuple(plan(rest_tip)), FINGER_OPEN, "down to its grip", yaw),
+        Waypoint(0.8, tuple(plan(rest_tip)), FINGER_HOLD, "hold the grip (trigger not pulled)", yaw),
+        Waypoint(1.2, tuple(plan(rest_tip) + up), FINGER_HOLD, "lift it", yaw),
+    ]
+    for slot in slots:
+        start, seated = _face(slot), _face(slot, seated=True)
+        lined_up = start - np.array((APPROACH, 0.0, 0.0))
+        name = f"screw {slot + 1}"
+        wps += [
+            Lazy(2.5, at(lined_up + np.array((0.0, 0.0, 0.05))), FINGER_HOLD, f"carry the driver to {name}"),
+            Lazy(1.2, at(lined_up), FINGER_HOLD, "bit in line with the screw"),
+            Lazy(0.6, at(lined_up), FINGER_HOLD, "settle"),
+            Lazy(0.8, read(lined_up, f"{name} lined up"), FINGER_HOLD, "line the bit up"),
+            Lazy(0.6, at(lined_up), FINGER_HOLD, "settle"),
+            Lazy(0.8, read(lined_up, f"{name} lined up, again"), FINGER_HOLD, "line it up again"),
+            Lazy(0.6, at(lined_up), FINGER_HOLD, "settle"),
+            Lazy(0.8, read(lined_up, f"{name} lined up, third"), FINGER_HOLD, "line it up a third time"),
+            Lazy(0.6, at(lined_up), FINGER_HOLD, "settle"),
+            Lazy(0.8, read(lined_up, f"{name} lined up, fourth"), FINGER_HOLD, "line it up a fourth time"),
+            Lazy(1.0, at(start - np.array((0.004, 0.0, 0.0))), FINGER_HOLD, "bit just short of the head"),
+            Lazy(0.5, at(start - np.array((0.004, 0.0, 0.0))), FINGER_HOLD, "settle"),
+            Lazy(0.6, read(start - np.array((0.004, 0.0, 0.0)), f"{name} at the head"), FINGER_HOLD,
+                 "line it up at the head"),
+            Lazy(0.5, at(start - np.array((0.004, 0.0, 0.0))), FINGER_HOLD, "settle"),
+            Lazy(0.6, read(start - np.array((0.004, 0.0, 0.0)), f"{name} at the head, again"), FINGER_HOLD,
+                 "line it up at the head again"),
+            Lazy(0.8, at(start + np.array((0.003, 0.0, 0.0))), FINGER_HOLD, "bit into the screw's head"),
+            Lazy(0.4, at(start + np.array((0.003, 0.0, 0.0))), FINGER_SQUEEZE, "pull the trigger"),
+            Lazy(DRIVE_S * 0.35, at(seated - np.array((0.020, 0.0, 0.0))), FINGER_SQUEEZE, "drive the screw in"),
+            Lazy(0.4, read(seated - np.array((0.020, 0.0, 0.0)), f"{name} driving", sideways_only=True),
+                 FINGER_SQUEEZE, "keep the bit on the screw"),
+            Lazy(DRIVE_S * 0.3, at(seated - np.array((0.006, 0.0, 0.0))), FINGER_SQUEEZE, "drive it further"),
+            Lazy(0.4, read(seated - np.array((0.006, 0.0, 0.0)), f"{name} nearly home", sideways_only=True),
+                 FINGER_SQUEEZE, "keep the bit on the screw"),
+            Lazy(DRIVE_S * 0.35, at(seated + np.array((press, 0.0, 0.0))), FINGER_SQUEEZE, "follow the screw home"),
+            Lazy(0.5, at(seated + np.array((press, 0.0, 0.0))), FINGER_SQUEEZE, "hold"),
+            Lazy(0.4, at(seated + np.array((press, 0.0, 0.0))), FINGER_HOLD, "let go of the trigger"),
+            Lazy(1.0, at(seated - np.array((0.03, 0.0, 0.0))), FINGER_HOLD, "back the bit out"),
+            Lazy(1.0, at(seated - np.array((0.03, 0.0, -0.05))), FINGER_HOLD, "up"),
+        ]
+    # The arm keeps the driver, lifted clear of the work (set back on its rest, it was dropped beside it).
+    return wps
+
+
 def demo():
-    """Each arm seats the two slots on its own side: the left arm outer slot first, the right arm inner slot
-    first, so the two arms never work the centre strip at the same time."""
+    """The left arm seats the left stud, the right arm the centre stud and then the right one; then each arm takes
+    up its impact driver, drives the screws at its studs and sets the driver back on its rest."""
     plans = {"left": [], "right": []}
     by_name = {s.name: s for s in STUDS}
     for name, (arm, slot) in ASSIGNMENT.items():
-        plans[arm].extend(_seat_waypoints(by_name[name], SLOT_Y[slot]))
+        plans[arm].extend(_seat_waypoints(by_name[name], slot))
+    for arm in ("left", "right"):
+        plans[arm].extend(_drive_waypoints(arm, SCREW_ORDER[arm], DRIVE_YAW[arm]))
     return plans
