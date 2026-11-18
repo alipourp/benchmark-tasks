@@ -21,7 +21,9 @@ Fidelity notes. The lumber, plywood, plates and stops are boxes at their real si
 built from boxes and cylinders (yam_parts). Lumber density is taken as about 450 kg/m^3 (spruce-pine-fir). The
 platform has no tilted or curved shapes, so each stop's rounded top is a row of overlapping spheres on a lower box;
 the spheres also bulge about 19 mm past each stop's outer face, away from its gap. The screws are our model
-(screw_runtime), not PhysX threads. Left out: wood grain, the eased edges of real dimensional lumber, the second
+(screw_runtime), not PhysX threads, but driving one takes the real work: the bit's tip touching the head and pressed
+into it with at least 20 N, and a pad pressing the trigger with at least 20 N, both read from PhysX contacts. The
+trigger's travel is not simulated. Left out: wood grain, the eased edges of real dimensional lumber, the second
 screw a framer would drive at each stud end, and the top plate's screws (driven from the table's far side, out of
 the arms' reach). Every free object has the platform's fixed friction (about 1.2), higher than wood on wood
 (about 0.4-0.5).
@@ -35,11 +37,12 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import screw_runtime as SR  # noqa: E402
+import yam_parts  # noqa: E402
 from yam_parts import Part, box, cyl  # noqa: E402
-from yam_arena.constants import FINGER_CLOSED, FINGER_OPEN, PAD_TIP_PAST_TCP  # noqa: E402
+from yam_arena.constants import FINGER_CLOSED, FINGER_OPEN, GRIPPER, PAD_TIP_PAST_TCP, SHOULDER, WRIST  # noqa: E402
 import yam_arena.demo as motion  # noqa: E402
 from yam_arena.demo import Waypoint  # noqa: E402
-from yam_arena import ik  # noqa: E402
+from yam_arena import ik, station  # noqa: E402
 from yam_arena.urdf import axis_angle_matrix  # noqa: E402
 from yam_arena.task_file import TABLE_TOP, Box, Sphere  # noqa: E402
 
@@ -113,14 +116,22 @@ SCREW_COLOR = (0.10, 0.10, 0.11)  # black-coated structural framing screws (they
 BIT_LEN, BIT_R = 0.025, 0.0032  # 1/4 in hex insert bit, #2 square tip, 25 mm out of the chuck
 CHUCK = (0.020, 0.0105)  # length, radius
 HOUSING = (0.120, 0.056, 0.056)  # motor and hammer housing behind the chuck
-HANDLE_DEPTH, HANDLE_LEN, HANDLE_T = 0.045, 0.100, 0.034  # front (trigger) to back, along the grip, across it
+HANDLE_DEPTH, HANDLE_LEN, HANDLE_T = 0.045, 0.100, 0.034  # front to back, along the grip, across it
 BATTERY = (0.105, 0.044, 0.072)
 HOUSING_X = -(BIT_LEN + CHUCK[0] + HOUSING[0] / 2)
 HANDLE_X = -(BIT_LEN + CHUCK[0] + 0.065)  # the grip hangs from the rear of the housing
 HANDLE_Y = HOUSING[1] / 2 + HANDLE_LEN / 2  # the grip's middle
+# The trigger: a block standing proud of the grip's front face, where the hand closes on the grip (at its balance
+# point). The robot's pads close on its face and on the grip's back.
+# The trigger: out of the grip, along it, across it. Broad, so the pad on it seats as firmly as on the grip's back
+# (on a 22 x 12 mm trigger the driver twisted in the hand when knocked, and fell).
+TRIGGER_PROUD, TRIGGER_LEN, TRIGGER_W = 0.006, 0.040, 0.028
+TRIGGER_Y = 0.071  # along the grip: the driver's balance point
+TRIGGER_FACE_X = HANDLE_X + HANDLE_DEPTH / 2 + TRIGGER_PROUD
+GRIP_SPAN = HANDLE_DEPTH + TRIGGER_PROUD  # the trigger's face to the grip's back: what the pads close on
 DRIVER_MASS = 0.95  # kg, with its battery
 REST_H = BATTERY[2] / 2 - HOUSING[2] / 2  # the rest under the housing, so it lies level on housing and battery
-BLACK, ORANGE, BLUE = (0.08, 0.08, 0.08), (0.90, 0.40, 0.10), (0.20, 0.35, 0.75)
+BLACK, ORANGE, BLUE, RED = (0.08, 0.08, 0.08), (0.90, 0.40, 0.10), (0.20, 0.35, 0.75), (0.75, 0.08, 0.08)
 
 SEATED_X = BOTTOM_PLATE_INNER_X + STUD_LENGTH / 2  # a stud's centre, tight to the bottom plate
 SEATED_Z = BASE_TOP + STUD_DEPTH / 2
@@ -217,26 +228,41 @@ def make_screw(i, y):
     return Part(f"screw_{i}", (SCREW_HEAD_X, y, SCREW_Z), shapes, mass=0.02, color=SCREW_COLOR)
 
 
-def make_driver(pos, name="driver_right"):
-    """An impact driver, lying on its side: bit, chuck, housing, pistol grip (front face: the trigger) and battery."""
+def make_driver(pos, name="driver_right", side=1.0):
+    """An impact driver, lying on its side: bit, chuck, housing, pistol grip with its trigger, and battery. ``side``
+    +1 lays it with its grip toward +y (the robot's left), -1 toward -y."""
     s = [cyl((-BIT_LEN / 2, 0.0, 0.0), BIT_R, BIT_LEN, "x", STEEL),
          cyl((-(BIT_LEN + CHUCK[0] / 2), 0.0, 0.0), CHUCK[1], CHUCK[0], "x", BLACK),
          box((HOUSING_X, 0.0, 0.0), HOUSING, ORANGE),
-         box((HANDLE_X, HANDLE_Y, 0.0), (HANDLE_DEPTH, HANDLE_LEN, HANDLE_T), BLACK),
-         box((HANDLE_X + 0.005, HOUSING[1] / 2 + HANDLE_LEN + BATTERY[1] / 2, 0.0), BATTERY, BLACK)]
+         box((HANDLE_X, side * HANDLE_Y, 0.0), (HANDLE_DEPTH, HANDLE_LEN, HANDLE_T), BLACK),
+         box((HANDLE_X + 0.005, side * (HOUSING[1] / 2 + HANDLE_LEN + BATTERY[1] / 2), 0.0), BATTERY, BLACK),
+         box((TRIGGER_FACE_X - TRIGGER_PROUD / 2, side * TRIGGER_Y, 0.0), (TRIGGER_PROUD, TRIGGER_LEN, TRIGGER_W),
+             RED)]
     return Part(name, pos, s, mass=DRIVER_MASS, color=ORANGE, friction=(0.60, 0.50), contact_offset=0.001,
                 grip=3)
 
 
 # The hand holds the grip level with the driver's centre of mass (uniform density, as PhysX takes it), so the
-# driver hangs balanced in a sideways grip instead of rolling in the pads.
-DRIVER_GRIP = (HANDLE_X, float(make_driver((0.0, 0.0, 0.0)).volume_centroid()[1]), 0.0)
+# driver hangs balanced in a sideways grip instead of rolling in the pads; and midway between the trigger's face and
+# the grip's back, where the pads close.
+DRIVER_GRIP = (TRIGGER_FACE_X - GRIP_SPAN / 2, float(make_driver((0.0, 0.0, 0.0)).volume_centroid()[1]), 0.0)
+# Both drivers lie, and are held, with their grips toward +y. (Mirrored, toward -y, the right driver would keep its
+# battery clear of the right arm at the right screw, but the right hand could then reach that screw only turned
+# round, and its rest and the middle screw only the other way: it cannot turn round holding the driver.)
+DRIVER_SIDE = {"left": 1.0, "right": 1.0}
+
+
+def driver_grip(arm):
+    """Where the hand holds that arm's driver, in the driver's frame."""
+    return (DRIVER_GRIP[0], DRIVER_SIDE[arm] * DRIVER_GRIP[1], DRIVER_GRIP[2])
+
+
 # Each hand has its own driver, on its own rest (bit tips given): neither arm can reach the other's driving poses
 # with the same hold on the grip (checked offline by IK), so they cannot share one.
 DRIVER_STARTS = {
-    "left": (0.10 - DRIVER_GRIP[0], 0.44 - DRIVER_GRIP[1], TOP + BATTERY[2] / 2),  # the grip at (0.10, 0.44), clear
+    "left": (0.10 - HANDLE_X, 0.44 - DRIVER_GRIP[1], TOP + BATTERY[2] / 2),  # the grip at (0.10, 0.44), clear
     # of the left arm's base (at 0.06, 0.36 the driver lay against it and the hand could not reach round the grip)
-    "right": (0.05 - DRIVER_GRIP[0], 0.0 - DRIVER_GRIP[1], TOP + BATTERY[2] / 2),  # the grip at (0.05, 0.00)
+    "right": (0.05 - HANDLE_X, 0.0 + DRIVER_GRIP[1], TOP + BATTERY[2] / 2),  # the grip at (0.05, 0.00)
 }
 DRIVER_NAMES = {"left": "driver_left", "right": "driver_right"}
 
@@ -267,7 +293,7 @@ STUDS = tuple(
     for name, (x, y, yaw, bottom) in START.items()
 )
 SCREWS = tuple(make_screw(i, y) for i, y in enumerate(SLOT_Y, start=1))
-DRIVERS = tuple(make_driver(DRIVER_STARTS[arm], DRIVER_NAMES[arm]) for arm in ("left", "right"))
+DRIVERS = tuple(make_driver(DRIVER_STARTS[arm], DRIVER_NAMES[arm], DRIVER_SIDE[arm]) for arm in ("left", "right"))
 OBJECTS = [*_jig(), *SCREWS, make_rest("left"), make_rest("right"), *STUDS, *DRIVERS]
 PRESSED_PARTS = tuple(DRIVER_NAMES.values())  # the pads squeeze its grip; advisory offline, as in the lever-set task
 
@@ -276,13 +302,42 @@ SR.SCREW_STARTS = tuple((SCREW_HEAD_X, y, SCREW_Z) for y in SLOT_Y)
 SR.SCREW_PROUD = SCREW_PROUD
 SR.PLATE_INNER_X = BOTTOM_PLATE_INNER_X
 SR.STUDS = tuple(s.name for s in STUDS)
+SR.SCREWS = tuple(s.name for s in SCREWS)
 SR.STUD_HALF = (STUD_LENGTH / 2, STUD_THICK / 2, STUD_DEPTH / 2)
-SR.DRIVER_GRIP = DRIVER_GRIP
-SR.HANDLE_DEPTH = HANDLE_DEPTH
 SR.HEAD_T = HEAD_T
+SR.BIT_R = BIT_R
+SR.TRIGGER_FACE = {  # each driver's trigger face in its own frame
+    DRIVER_NAMES[arm]: (TRIGGER_FACE_X, tuple(sorted(DRIVER_SIDE[arm] * (TRIGGER_Y + d * TRIGGER_LEN / 2) for d in (-1, 1))),
+                        (-TRIGGER_W / 2, TRIGGER_W / 2))
+    for arm in ("left", "right")
+}
 SR.DRIVERS = tuple(DRIVER_NAMES.values())
-SR.NAMES = (*SR.DRIVERS, *SR.STUDS, *(s.name for s in SCREWS))
+SR.NAMES = (*SR.DRIVERS, *SR.STUDS, *SR.SCREWS)
 SR.MODEL.clear()
+SR.prepare()  # PhysX contact processing on, for the model's contact reads
+
+
+# At spawn (GPU host only): the drivers report their contacts (the bit on a screw's head, a pad on the trigger), and
+# the screws are kinematic, so a head stops the bit as a screw held by its thread does, and the model moves them.
+_original_spawn_part = getattr(yam_parts._spawn_part, "_studs_original", yam_parts._spawn_part)
+
+
+def _spawn_part(prim_path, cfg, *args, **kwargs):
+    prim = _original_spawn_part(prim_path, cfg, *args, **kwargs)
+    name = getattr(cfg, "part_name", "")
+    if name in SR.DRIVERS or name in SR.SCREWS:
+        from pxr import PhysxSchema, UsdPhysics
+
+        if name in SR.DRIVERS:
+            PhysxSchema.PhysxContactReportAPI.Apply(prim).CreateThresholdAttr().Set(0.0)
+        else:
+            UsdPhysics.RigidBodyAPI(prim).CreateKinematicEnabledAttr().Set(True)
+    return prim
+
+
+_spawn_part._studs_original = _original_spawn_part
+yam_parts._spawn_part = _spawn_part
+yam_parts._CLONED_SPAWN_PART = None  # cloned from _spawn_part when the scene is built
 
 # -- scoring -------------------------------------------------------------------------------
 # Each stud scores up to 1/3, on its own; each mark (slot) credits at most one stud.
@@ -672,21 +727,28 @@ def _seat_waypoints(stud: Box, slot: int) -> list[Waypoint]:
 
 
 # -- driving the screws ---------------------------------------------------------------------
-# The hand holds the impact driver by its grip from above, the pads closing on the grip's front (the trigger) and
-# back. A firm hold (pads driven 8 mm into the grip) carries it; a squeeze (pads driven fully closed) pulls the
-# trigger. As with the studs, the hand reads where the bit is before going in, and lines it up with the screw.
-FINGER_HOLD = -(HANDLE_DEPTH - 0.008) / 2  # each finger's position: the pads 8 mm inside the grip's faces
-# The squeeze that pulls the trigger: the pads 13 mm inside the grip's faces, ~33 N a finger. Closing the gripper
-# fully drove both fingers to their 50 N limit, and two fingers pushing at their limit leave the driver free to slide
-# between them along the bit's axis (the hand lost the bit and it slid off the head).
-FINGER_SQUEEZE = -(HANDLE_DEPTH - 0.013) / 2
+# The hand holds the impact driver by its grip from above, one pad on the trigger's face and the other on the grip's
+# back. Each finger presses with about 5 N per mm it is driven past the surface it touches (the gripper's stiffness,
+# 5000 N/m, up to its 50 N limit). A light hold (3 mm, ~15 N) carries the driver without pulling the trigger
+# (20 N); a squeeze (7 mm, ~35 N) pulls it. Pushing the bit into a head with F takes F/2 off the trigger pad and puts
+# it on the back pad, so with the squeeze the trigger stays pulled, and the back pad within its limit, for pushes up
+# to 30 N; the demo pushes 25 N (the screw needs 20 N). As with the studs, the hand reads where the bit is before
+# going in, and lines it up with the screw.
+FINGER_K = GRIPPER["stiffness"]
+# each finger's position: the pads 2.8 mm past the trigger and the grip's back, ~14 N, under the trigger's 17 N and
+# enough to carry the driver (the drops seen at 14 and 18 N were knocks against the arm's base, now avoided)
+FINGER_HOLD = -(GRIP_SPAN / 2 - 0.0028)
+# The squeeze: the pads 8 mm in, ~40 N. Pushing the bit loads the back pad and unloads the trigger by about half the
+# push, and the finger's 50 N limit caps the back pad, so the trigger stays at 17 N or more for pushes up to 33 N
+# (at 7 mm, ~35 N, a 26 N push left the trigger at 19.8 N, under the 20 N it then took, and the screw
+# never turned).
+FINGER_SQUEEZE = -(GRIP_SPAN / 2 - 0.008)
 GRIP_DZ = 0.005  # the TCP above the grip's centre line (pad tips 8 mm below it)
 DRIVE_YAW = {"left": math.pi / 2, "right": math.pi / 2}  # hand straight down, pads closing along x
 APPROACH = 0.008  # the bit's tip this far short of the screw's head while it is lined up
-# The hand follows the head in to 1 mm short of seated, reading only across the screw's axis on the way: pushed past
-# seated, the driver buckled off a head that was nearly home.
-PRESS = -0.001
-DRIVE_S = 4.0  # time to drive a screw home (the screw takes ~1.5 s at the driver's speed)
+PUSH = 23.0  # N: the push on the bit the demo aims for while driving (the screw turns from SR.F_PUSH, 20 N)
+JOINT_K = np.array([SHOULDER["stiffness"]] * 3 + [WRIST["stiffness"]] * 3)  # the arm's joint drives, N m/rad
+DRIVE_S = 4.5  # time to follow a screw home (the screw takes ~1.5 s at the driver's speed, pushed)
 READ_GAIN = 0.6  # each read of the driver applies this share of the error it finds,
 READ_TURN = math.radians(5.0)  # and turns the hand at most this much (near the edge of the arms' reach, a full
 # correction overshot: the right arm ended 11 mm and 9 degrees off after three reads)
@@ -711,10 +773,52 @@ def _bit_turn(R_driver):
     return axis_angle_matrix(v / s, angle)
 
 
+PAD_TWIST = 0.6  # N m: the twist about the vertical the plan has the pads pass on to the grip (they hold ~0.9)
+
+
+def _jacobian(q, base, offset_local):
+    """The 6x6 Jacobian (linear velocity of a point fixed in the hand, ``offset_local`` in the TCP frame; angular
+    velocity), numerically."""
+    def pose(qq):
+        p, R = ik.tcp_pose(qq, base)
+        return p + R @ offset_local, R
+
+    p0, R0 = pose(q)
+    J = np.zeros((6, 6))
+    for k in range(6):
+        dq = np.zeros(6)
+        dq[k] = 1e-6
+        p1, R1 = pose(q + dq)
+        J[:3, k] = (p1 - p0) / 1e-6
+        J[3:, k] = ik._rot_error(R1, R0) / 1e-6
+    return J
+
+
+def _pressing(arm: str, hand_pos, hand_R, tip, force: float):
+    """The hand pose to command so that, with the bit's tip held at ``tip`` by a screw's head, the hand pushes the
+    grip with ``force`` N along the screw's axis and settles at (hand_pos, hand_R). The grip is 71 mm off the bit's
+    axis, so the push twists the driver about the tip (1.8 N m at 25 N), more than the pads can pass on: the plan has
+    the pads take PAD_TWIST of it and the hand push the grip sideways for the rest, which the tip's friction on the
+    head takes (about 0.45 N per N of push, within the ~0.9 friction there). Each joint drive is a spring, so the
+    command leads the pose by K^-1 J^T W in the joints (J at the grip), carried back to a hand pose through the arm's
+    kinematics; and the driver gives F / (2 k) in the pads, so the hand goes that much further."""
+    base = np.asarray(station.BASES[arm], float)
+    q, _, _ = ik.solve(hand_pos, ik.matrix_to_quat_xyzw(hand_R), None, base_pos=base, iters=200)
+    p0, R0 = ik.tcp_pose(q, base)
+    grip = np.asarray(tip, float) + np.asarray(driver_grip(arm))  # the driver square, as the plan holds it
+    r = np.asarray(tip, float) - grip
+    full = -r[1] * force  # the push's twist about +z, by the pads on the grip up to PAD_TWIST
+    twist = math.copysign(min(PAD_TWIST, abs(full)), full)
+    side = (r[1] * force + twist) / r[0]  # by the hand on the grip, along y
+    wrench = np.array((force, side, 0.0, 0.0, 0.0, twist))
+    q_cmd = np.clip(q + (_jacobian(q, base, R0.T @ (grip - p0)).T @ wrench) / JOINT_K, ik.LOWER, ik.UPPER)
+    p1, R1 = ik.tcp_pose(q_cmd, base)
+    return p1 + SR.AXIS * force / (2 * FINGER_K), R1
+
+
 def _drive_waypoints(arm: str, slots, yaw: float) -> list[Waypoint]:
-    press = PRESS
     fix = {"dp": np.zeros(3), "R": np.eye(3)}  # the reads' correction to the planned hand pose
-    grip_local = np.asarray(DRIVER_GRIP) + np.array((0.0, 0.0, GRIP_DZ))
+    grip_local = np.asarray(driver_grip(arm)) + np.array((0.0, 0.0, GRIP_DZ))
     up = np.array((0.0, 0.0, 0.06))
     rest_tip = np.asarray(DRIVER_STARTS[arm])
     driver = DRIVER_NAMES[arm]
@@ -725,6 +829,14 @@ def _drive_waypoints(arm: str, slots, yaw: float) -> list[Waypoint]:
 
     def at(tip):
         return lambda: (plan(tip) + fix["dp"], fix["R"] @ hand_rot)
+
+    def pressing(tip, force=PUSH):
+        """The hand, read corrections in, pushing the bit's tip at ``tip`` (a head's face) with ``force``."""
+        def where():
+            hand, R = at(tip)()
+            return _pressing(arm, hand, R, tip, force)
+
+        return where
 
     def read(tip, label, sideways_only=False):
         def where():
@@ -760,6 +872,8 @@ def _drive_waypoints(arm: str, slots, yaw: float) -> list[Waypoint]:
         lined_up = start - np.array((APPROACH, 0.0, 0.0))
         name = f"screw {slot + 1}"
         wps += [
+            # Straight across, low, as in the earlier full-score demo. The right driver brushes its arm on the way
+            # to the right screw; it stays in the hand because the pad on the trigger seats on a broad face.
             Lazy(2.5, at(lined_up + np.array((0.0, 0.0, 0.05))), FINGER_HOLD, f"carry the driver to {name}"),
             Lazy(1.2, at(lined_up), FINGER_HOLD, "bit in line with the screw"),
             Lazy(0.6, at(lined_up), FINGER_HOLD, "settle"),
@@ -777,17 +891,19 @@ def _drive_waypoints(arm: str, slots, yaw: float) -> list[Waypoint]:
             Lazy(0.5, at(start - np.array((0.004, 0.0, 0.0))), FINGER_HOLD, "settle"),
             Lazy(0.6, read(start - np.array((0.004, 0.0, 0.0)), f"{name} at the head, again"), FINGER_HOLD,
                  "line it up at the head again"),
-            Lazy(0.8, at(start + np.array((0.003, 0.0, 0.0))), FINGER_HOLD, "bit into the screw's head"),
-            Lazy(0.4, at(start + np.array((0.003, 0.0, 0.0))), FINGER_SQUEEZE, "pull the trigger"),
-            Lazy(DRIVE_S * 0.35, at(seated - np.array((0.020, 0.0, 0.0))), FINGER_SQUEEZE, "drive the screw in"),
-            Lazy(0.4, read(seated - np.array((0.020, 0.0, 0.0)), f"{name} driving", sideways_only=True),
-                 FINGER_SQUEEZE, "keep the bit on the screw"),
-            Lazy(DRIVE_S * 0.3, at(seated - np.array((0.006, 0.0, 0.0))), FINGER_SQUEEZE, "drive it further"),
-            Lazy(0.4, read(seated - np.array((0.006, 0.0, 0.0)), f"{name} nearly home", sideways_only=True),
-                 FINGER_SQUEEZE, "keep the bit on the screw"),
-            Lazy(DRIVE_S * 0.35, at(seated + np.array((press, 0.0, 0.0))), FINGER_SQUEEZE, "follow the screw home"),
-            Lazy(0.5, at(seated + np.array((press, 0.0, 0.0))), FINGER_SQUEEZE, "hold"),
-            Lazy(0.4, at(seated + np.array((press, 0.0, 0.0))), FINGER_HOLD, "let go of the trigger"),
+            Lazy(0.8, at(start + np.array((0.001, 0.0, 0.0))), FINGER_HOLD, "bit onto the screw's head"),
+            Lazy(0.4, at(start + np.array((0.001, 0.0, 0.0))), FINGER_HOLD, "settle"),
+            Lazy(1.5, pressing(start), FINGER_HOLD, "press the bit into the head"),
+            Lazy(0.6, pressing(start), FINGER_SQUEEZE, "pull the trigger"),
+            # One steady move from the head to seated, pressing all the way: the screw turns only while the bit is
+            # pressed in, so it goes in as fast as the hand follows. (A read part-way, which set the hand back to
+            # the plan without the press, let a screw that had run ahead of the plan lose its bit 6 mm short.)
+            Lazy(DRIVE_S, pressing(seated), FINGER_SQUEEZE, "follow the screw home, pressing"),
+            Lazy(0.6, pressing(seated), FINGER_SQUEEZE, "hold"),
+            # Ease the push off before relaxing the grip: let go of the trigger while still pushing ~23 N, the
+            # pads on the grip were left almost unloaded and the right driver fell out of the hand.
+            Lazy(1.0, at(seated - np.array((0.002, 0.0, 0.0))), FINGER_SQUEEZE, "ease off"),
+            Lazy(0.4, at(seated - np.array((0.002, 0.0, 0.0))), FINGER_HOLD, "let go of the trigger"),
             Lazy(1.0, at(seated - np.array((0.03, 0.0, 0.0))), FINGER_HOLD, "back the bit out"),
             Lazy(1.0, at(seated - np.array((0.03, 0.0, -0.05))), FINGER_HOLD, "up"),
         ]

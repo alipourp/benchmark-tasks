@@ -215,6 +215,7 @@ def test_distance_is_zero_when_fastened():
 
 
 # -- screw model (screw_runtime) -----------------------------------------------------------------
+TOUCH = 0.0005  # offline stand-in for PhysX: the bit's tip presses a head only within this of its face
 
 
 def _frames(driver_tip, stud_slots):
@@ -234,25 +235,32 @@ def _frames(driver_tip, stud_slots):
     return frames
 
 
-def _grips(driver_tip, squeeze):
-    grip = np.asarray(driver_tip, float) + np.asarray(M.DRIVER_GRIP)
-    target = M.HANDLE_DEPTH - (0.013 if squeeze else 0.008)
-    return {"right": (grip, M.HANDLE_DEPTH, target), "left": (np.array((0.0, 5.0, 0.0)), 0.094, 0.094)}
+def _trigger_point(driver_tip):
+    return np.asarray(driver_tip, float) + np.array((M.TRIGGER_FACE_X, M.DRIVER_SIDE["right"] * M.TRIGGER_Y, 0.0))
 
 
-def _drive(model, slot, stud_slots, squeeze=True, seconds=3.0, follow=True):
-    """Hold the right driver's bit on screw ``slot``'s head, following it in when ``follow``."""
+def _contacts(model, driver_tip, slot, push, trigger):
+    """What PhysX would report for the right driver: the bit's tip on screw ``slot``'s head with ``push`` N (only
+    while the tip is at the head's face), and a pad on the trigger's face with ``trigger`` N."""
+    tip = np.asarray(driver_tip, float)
+    face = model.screw_pos(slot) - np.array((M.HEAD_T, 0.0, 0.0))
+    hits = []
+    if abs(float(tip[0] - face[0])) <= TOUCH and push > 0.0:
+        hits.append((SR.SCREWS[slot], tip, np.array((-1.0, 0.0, 0.0)), push))
+    if trigger > 0.0:
+        hits.append((SR.ROBOT, _trigger_point(tip), np.array((-1.0, 0.0, 0.0)), trigger))
+    return {"driver_right": hits}
+
+
+def _drive(model, slot, stud_slots, push=25.0, trigger=35.0, seconds=3.0, follow=True, short=0.0):
+    """Hold the right driver's bit on screw ``slot``'s head (``short`` m short of it), pressing with ``push`` N and
+    the trigger with ``trigger`` N, following the head in when ``follow``."""
     dt = 1 / 240
     for _ in range(int(seconds / dt)):
         face = model.screw_pos(slot) - np.array((M.HEAD_T, 0.0, 0.0))
         tip = face if follow else np.asarray(M.SCREWS[slot].pos) - np.array((M.HEAD_T, 0.0, 0.0))
-        model.update(_frames(tip, stud_slots), _grips(tip, squeeze), dt, {})
-
-
-def test_the_trigger_needs_a_squeeze_not_just_a_hold():
-    model = SR.Model()
-    _drive(model, 0, {"stud_3": 0}, squeeze=False)
-    assert model.advance[0] == 0.0 and not model.trigger
+        tip = tip - np.array((short, 0.0, 0.0))
+        model.update(_frames(tip, stud_slots), _contacts(model, tip, slot, push, trigger), dt, {})
 
 
 def test_a_screw_driven_with_its_stud_on_the_marks_catches_and_fastens_it():
@@ -260,12 +268,62 @@ def test_a_screw_driven_with_its_stud_on_the_marks_catches_and_fastens_it():
     _drive(model, 0, {"stud_3": 0})
     assert model.caught[0] == "stud_3"
     assert model.seated(0) and model.fastened[0]
+    assert model.min_push[0] >= SR.F_PUSH
+
+
+def test_contact_forces_count_by_size_whatever_their_sign():
+    """PhysX reports the pads' forces on the grip as negative (along a normal into the driver): they still pull the
+    trigger and drive the screw (the earlier reader skipped them, so the trigger never read more than 0 N)."""
+    model = SR.Model()
+    dt = 1 / 240
+    for _ in range(int(3.0 / dt)):
+        tip = model.screw_pos(0) - np.array((M.HEAD_T, 0.0, 0.0))
+        hits = {d: [(o, p, n, -f) for o, p, n, f in h] for d, h in _contacts(model, tip, 0, 25.0, 35.0).items()}
+        model.update(_frames(tip, {"stud_3": 0}), hits, dt, {})
+    assert model.trigger["driver_right"] == pytest.approx(35.0)
+    assert model.seated(0) and model.fastened[0]
+
+
+def test_the_trigger_needs_a_squeeze_not_just_a_hold():
+    model = SR.Model()
+    _drive(model, 0, {"stud_3": 0}, trigger=15.0)  # the carrying hold, ~15 N on the trigger
+    assert model.advance[0] == 0.0
+    assert model.trigger["driver_right"] == pytest.approx(15.0)
+
+
+@pytest.mark.parametrize("push,turns", [(0.0, False), (10.0, False), (19.5, False), (20.0, True), (30.0, True)])
+def test_a_screw_turns_only_with_the_bit_pressed_in_with_20_newtons(push, turns):
+    model = SR.Model()
+    _drive(model, 0, {"stud_3": 0}, push=push, seconds=1.0)
+    assert (model.advance[0] > 0.0) == turns
+
+
+@pytest.mark.parametrize("short", [0.001, 0.003])
+def test_a_bit_short_of_the_head_does_not_drive_it(short):
+    """No contact, no drive: the bit must touch the head (the earlier model let it drive from up to 3 mm short)."""
+    model = SR.Model()
+    _drive(model, 0, {"stud_3": 0}, short=short, seconds=1.0)
+    assert model.advance[0] == 0.0 and model.engaged[0] is None
+
+
+def test_contacts_off_the_bit_tip_or_the_trigger_do_not_count():
+    """The chuck against a head, or a pad on the grip's back, are not the bit in the head or the trigger pulled."""
+    model = SR.Model()
+    tip = np.asarray(M.SCREWS[0].pos) - np.array((M.HEAD_T, 0.0, 0.0))
+    chuck = tip + np.array((-(M.BIT_LEN + 0.005), 0.0, 0.0))
+    back = tip + np.array((M.HANDLE_X - M.HANDLE_DEPTH / 2, M.DRIVER_SIDE["right"] * M.TRIGGER_Y, 0.0))
+    hits = {"driver_right": [(SR.SCREWS[0], chuck, np.array((-1.0, 0.0, 0.0)), 40.0),
+                             (SR.ROBOT, back, np.array((1.0, 0.0, 0.0)), 40.0)]}
+    for _ in range(240):
+        model.update(_frames(tip, {"stud_3": 0}), hits, 1 / 240, {})
+    assert model.advance[0] == 0.0 and model.engaged[0] is None
+    assert model.trigger["driver_right"] == 0.0
 
 
 def test_a_screw_stops_when_the_bit_does_not_follow_the_head():
     model = SR.Model()
     _drive(model, 0, {"stud_3": 0}, follow=False)
-    assert 0.0 < model.advance[0] < 0.006  # the head draws ahead of the bit and the bit drops out
+    assert 0.0 < model.advance[0] < 0.003  # the head draws away from the bit: no contact, no push, no drive
     assert not model.seated(0)
 
 
@@ -273,6 +331,20 @@ def test_a_screw_driven_with_no_stud_there_catches_nothing():
     model = SR.Model()
     _drive(model, 0, {})
     assert model.seated(0) and model.caught[0] is None and not model.fastened[0]
+
+
+def test_the_trigger_sits_where_the_pads_close_and_the_hold_and_squeeze_straddle_it():
+    """The hand's grip point is midway between the trigger's face and the grip's back, at the trigger; the hold
+    presses it below the trigger's 17 N and the squeeze above it, even while pushing the demo's 23 N."""
+    assert M.TRIGGER_FACE_X - M.DRIVER_GRIP[0] == pytest.approx(M.GRIP_SPAN / 2)
+    assert abs(M.DRIVER_GRIP[1] - M.TRIGGER_Y) < M.TRIGGER_LEN / 2 - 0.005
+    hold = M.FINGER_K * (M.GRIP_SPAN / 2 + M.FINGER_HOLD)
+    squeeze = M.FINGER_K * (M.GRIP_SPAN / 2 + M.FINGER_SQUEEZE)
+    # pushing loads the back pad and unloads the trigger by half the push; the simulated finger tops out at 50 N
+    assert hold < SR.F_TRIGGER < min(squeeze - M.PUSH / 2, 50.0 - M.PUSH)
+    assert SR.F_TRIGGER + SR.F_PUSH <= 40.0  # a real trial: the back pad within the YAM's ~40 N per finger
+    assert 2 * 0.5 * hold > 1.5 * M.DRIVER_MASS * 9.81  # the hold carries the driver (pad friction ~0.5)
+    assert SR.F_PUSH < M.PUSH
 
 
 # -- demo --------------------------------------------------------------------------------------
