@@ -8,7 +8,7 @@ Left of the pocket, in front of the wall, two mason's boards (bankers), 17.5 cm 
 on its bed with its long side toward the arms and overhanging the board's front edge by 4 cm. The nearer one is
 194 x 92 x 57 mm and about 1.9 kg, the same size and colour as the wall's bricks; the farther one is the same colour
 but longer: 292 x 92 x 57 mm (a Norman brick). Right of the wall stands a timber mortar board with a patch of fresh
-mortar on its far end, and on its near end a small trowel, blade toward the wall, already loaded with mortar.
+mortar on its far end, and on its near end a margin trowel, blade toward the wall, already loaded with mortar.
 Behind the right arm stands a black debris bucket, 13 cm tall.
 
 The pocket is finished when the broken pieces are in the bucket, the pocket's bed is covered with fresh mortar,
@@ -114,8 +114,8 @@ def _wall() -> list[Box]:
 
 
 # --- broken pieces of the old brick, in the pocket ----------------------------------------------------------------
-# (name, size x, y, z, centre x from the face, centre y). Each no wider than 80 mm across, so a gripper (94 mm
-# open) can take it from the side.
+# (name, size x, y, z, centre x from the face, centre y): two fragments of the old brick, as it comes out when
+# broken up with a chisel.
 PIECES = (
     ("broken_piece_1", (0.070, 0.062, 0.050), 0.040, -0.050),
     ("broken_piece_2", (0.060, 0.058, 0.045), 0.040, 0.050),
@@ -132,10 +132,10 @@ def _pieces() -> list[Box]:
 
 # --- the bankers and the replacement bricks --------------------------------------------------------------------------
 BANKER_TOP = TOP + 0.175
-BANKER_X = (0.32, 0.42)  # 2 cm nearer the wall than probe 45, so the left arm reaches its grip on the brick exactly
+BANKER_X = (0.32, 0.42)  # the bankers' front and back edges
 OVERHANG = 0.04  # each brick overhangs its board's front edge, so a gripper can take its front edge
 # Both bankers stand left of the pocket, so the right arm clears the pocket without passing over them.
-BRICK_Y = 0.225  # the matching brick, nearer the pocket (2.5 cm clear of the hand spreading mortar at the pocket's end)
+BRICK_Y = 0.24  # the matching brick, the nearer one to the pocket
 NORMAN_Y = 0.505  # the long one, farther left
 BRICK_START = (BANKER_X[0] - OVERHANG + UNIT[1] / 2, BRICK_Y, BANKER_TOP + UNIT[2] / 2 + 0.001)
 NORMAN_START = (BANKER_X[0] - OVERHANG + NORMAN[1] / 2, NORMAN_Y, BANKER_TOP + NORMAN[2] / 2 + 0.001)
@@ -157,9 +157,9 @@ REPLACEMENT = Box("replacement_brick", pos=BRICK_START, size=(UNIT[1], UNIT[0], 
 LONG_BRICK = Box("norman_brick", pos=NORMAN_START, size=(NORMAN[1], NORMAN[0], NORMAN[2]), mass=NORMAN_MASS,
                  color=BRICK_RGB)
 
-# --- the mortar station: a board with fresh mortar on its far end, and a small trowel ------------------------------
+# --- the mortar station: a board with fresh mortar on its far end, and a margin trowel -----------------------------
 # On the right, just past the end of the wall: a timber board 17 cm high runs toward the wall, the far part of its
-# top a patch of fresh mortar (flush with the timber). A small rectangular trowel (a buttering trowel)
+# top a patch of fresh mortar (flush with the timber). A 5 x 2 in margin trowel
 # lies on its near end along x, blade toward the wall, its handle propped level on a small block and sticking out
 # over the board's front edge so a hand can take its end.
 MORTAR_RGB_FRESH = (0.45, 0.44, 0.42)  # wet mortar, darker than the cured joints
@@ -170,10 +170,9 @@ BOARD_X = (0.295, 0.70)
 PATCH_X = (0.53, 0.66)  # the mortar, across the board's width
 # The trowel: a wooden handle (the rigid body, as a Box) with a steel shank and blade added by the hook below.
 # Trowel frame: origin at the handle's centre, x along the trowel toward the blade, z up.
-HANDLE_SIZE = (0.110, 0.032, 0.032)  # a 32 mm square wooden handle (25 mm let the trowel tip in the grip)
+HANDLE_SIZE = (0.110, 0.032, 0.032)  # a wooden handle, square
 TROWEL_RISE = 0.025  # the offset shank: the handle sits this much above the blade
-BLADE_SIZE = (0.127, 0.070, 0.002)  # a 5 x 2-3/4 in blade (a buttering trowel): wide enough that one pass
-# covers the pocket's ends with the hand staying clear of the replacement brick
+BLADE_SIZE = (0.127, 0.051, 0.002)  # a 5 x 2 in margin trowel's blade (a stock trowel, e.g. Marshalltown 52)
 BLADE_X = (HANDLE_SIZE[0] / 2 + 0.005, HANDLE_SIZE[0] / 2 + 0.005 + BLADE_SIZE[0])  # in the trowel frame
 BLADE_TOP = -(HANDLE_SIZE[2] / 2 + TROWEL_RISE)  # in the trowel frame: 37.5 mm below the handle's centre
 BLADE_UNDER = BLADE_TOP - BLADE_SIZE[2]  # 39.5 mm below it
@@ -312,19 +311,24 @@ def brick_fit(pos: np.ndarray, quat_xyzw: Any) -> BrickFit:
 # --- fresh mortar on the pocket's bed --------------------------------------------------------------------------------
 # Mortar is not a paste here: it is a ledger of the bed's cells (1 cm-ish, 9 deep x 21 along the pocket), updated from
 # the trowel's pose each control step and drawn as thin tiles the cameras see, the way the accepted painting task
-# treats paint. The trowel starts with a load of mortar on its blade (it can take another by being laid flat on
-# the board's mortar patch); a load covers LOAD_CELLS cells. A bed cell gets mortar when it lies under the loaded
-# blade (its centre within BLADE_MARGIN of the blade's outline: mortar squeezes a little past the edge) with the
-# blade's underside between BLADE_BELOW below and BLADE_ABOVE above the bed there, and the blade within
-# MAX_BLADE_TILT of level. BLADE_ABOVE is the bed joint's thickness: a mason spreads a bed with the blade about that
-# far above the brick, the mortar filling the gap. Cells covered once the replacement brick has started into the
-# pocket do not count: the bed has to be mortared before the brick goes in.
+# treats paint. Mortar leaves the blade only the way a mason spreads it: the loaded blade tilted MIN_EDGE_TILT to
+# MAX_EDGE_TILT from level, its lowest edge pressed on the bed and dragged across it, the tilt feeding the load down
+# to that edge, which lays it as it slides. Each control step, every point of the lowest edge that touches the bed
+# (within CONTACT_TOL above it: rigid bodies cannot sink in, so that is contact) and has slid at least MIN_SLIDE since
+# the last step marks the cells its path passed over (centres within DEPOSIT_REACH of it). A level blade, one held
+# off the bed, or an edge pressed down but not moving lays nothing. The trowel starts with a load on its blade
+# (LOAD_CELLS cells' worth); pressing the blade flat into the board's mortar patch loads it again. Cells covered once
+# the replacement brick has started into the pocket do not count: the bed is mortared before the brick goes in.
 BED_CELLS = (9, 21)  # along x (the pocket's depth), along y (its width)
 LOAD_CELLS = 240  # one trowel load covers the 189-cell bed once with some to spare
-BLADE_MARGIN = 0.003  # mortar squeezes a little past the blade's edge: cells within 3 mm of its outline count
-BLADE_ABOVE = JOINT  # 10 mm: the bed joint's thickness
-BLADE_BELOW = 0.003
-MAX_BLADE_TILT = math.radians(10.0)
+MIN_EDGE_TILT = math.radians(5.0)  # a blade flatter than this lays no mortar: the load stays on it
+MAX_EDGE_TILT = math.radians(35.0)  # steeper, the edge scrapes mortar off rather than laying it
+CONTACT_TOL = 0.001  # a point of the edge within 1 mm above the surface touches it
+SINK_TOL = 0.004  # how far below a surface the simulator may let an edge sit while pressed on it
+MIN_SLIDE = 0.00025  # m a touching point must move in one 50 ms step (5 mm/s) to count as sliding
+DEPOSIT_REACH = 0.003  # mortar squeezes a little past the edge's path: cells within 3 mm of it count
+EDGE_STEP = 0.003  # the lowest edge is checked at points this far apart
+LOAD_TILT = math.radians(10.0)  # pressed into the board's mortar no steeper than this, the blade loads
 BRICK_IN = 0.005  # m of the brick inside the pocket that counts as it having started in
 _gx = X_FACE + (np.arange(BED_CELLS[0]) + 0.5) * UNIT[1] / BED_CELLS[0]
 _gy = -POCKET_HALF + (np.arange(BED_CELLS[1]) + 0.5) * 2 * POCKET_HALF / BED_CELLS[1]
@@ -343,17 +347,60 @@ def trowel_origin(reported: np.ndarray, rot: np.ndarray) -> np.ndarray:
     return origin
 
 
-def blade_cells(pos: np.ndarray, rot: np.ndarray, cells_xy: np.ndarray, surface_z: float) -> np.ndarray:
-    """Which cells (on a level surface at ``surface_z``) the blade is touching, from the trowel's pose."""
-    if math.acos(min(1.0, abs(float(rot[2, 2])))) > MAX_BLADE_TILT:
-        return np.zeros(len(cells_xy), dtype=bool)
-    world = np.column_stack([cells_xy, np.full(len(cells_xy), surface_z)])
-    local = (world - pos) @ rot  # each cell in the trowel frame
-    inside = ((local[:, 0] >= BLADE_X[0] - BLADE_MARGIN) & (local[:, 0] <= BLADE_X[1] + BLADE_MARGIN)
-              & (np.abs(local[:, 1]) <= BLADE_SIZE[1] / 2 + BLADE_MARGIN))
-    gap = BLADE_UNDER - local[:, 2]  # the blade's underside above the surface at each cell
-    touching: np.ndarray = inside & (gap <= BLADE_ABOVE) & (gap >= -BLADE_BELOW)
+def _edge_points(a: tuple[float, float], b: tuple[float, float]) -> np.ndarray:
+    n = int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / EDGE_STEP)) + 1
+    t = np.linspace(0.0, 1.0, n)[:, None]
+    return np.column_stack([(1 - t) * np.array(a) + t * np.array(b), np.full(n, BLADE_UNDER)])
+
+
+# The blade's underside edges in the trowel frame: its two long sides, its heel (by the shank) and its tip.
+_X0, _X1, _W = BLADE_X[0], BLADE_X[1], BLADE_SIZE[1] / 2
+BLADE_EDGES = tuple(_edge_points(a, b) for a, b in (((_X0, -_W), (_X1, -_W)), ((_X0, _W), (_X1, _W)),
+                                                    ((_X0, -_W), (_X0, _W)), ((_X1, -_W), (_X1, _W))))
+
+
+def blade_tilt(rot: np.ndarray) -> float:
+    return math.acos(min(1.0, abs(float(rot[2, 2]))))
+
+
+def lowest_edge(pos: np.ndarray, rot: np.ndarray) -> tuple[int, np.ndarray]:
+    """The blade's lowest underside edge: its index in BLADE_EDGES and its points in the world."""
+    worlds = [pos + pts @ rot.T for pts in BLADE_EDGES]
+    k = int(np.argmin([w[:, 2].mean() for w in worlds]))
+    return k, worlds[k]
+
+
+def on_bed(points: np.ndarray) -> np.ndarray:
+    """Which points lie over the pocket's bed and touch it."""
+    over = ((points[:, 0] >= X_FACE) & (points[:, 0] <= X_FACE + UNIT[1]) & (np.abs(points[:, 1]) <= POCKET_HALF))
+    gap = points[:, 2] - BED
+    touching: np.ndarray = over & (gap <= CONTACT_TOL) & (gap >= -SINK_TOL)
     return touching
+
+
+def swept_cells(before: np.ndarray, after: np.ndarray, cells_xy: np.ndarray) -> np.ndarray:
+    """Cells within DEPOSIT_REACH of any of the paths from ``before`` to ``after`` (matching rows, x and y)."""
+    if not len(before):
+        return np.zeros(len(cells_xy), dtype=bool)
+    a, d = before[:, :2], after[:, :2] - before[:, :2]
+    p = cells_xy[:, None, :]
+    t = np.clip(((p - a) * d).sum(-1) / np.maximum((d * d).sum(-1), 1e-12), 0.0, 1.0)
+    dist = np.linalg.norm(p - (a + t[..., None] * d), axis=-1)
+    hit: np.ndarray = (dist <= DEPOSIT_REACH).any(axis=1)
+    return hit
+
+
+def loads_from_board(pos: np.ndarray, rot: np.ndarray) -> bool:
+    """The blade pressed flat into the board's mortar patch (its underside touching it over a quarter of the
+    patch's sample points)."""
+    if blade_tilt(rot) > LOAD_TILT:
+        return False
+    world = np.column_stack([_PATCH_XY, np.full(len(_PATCH_XY), BOARD_TOP)])
+    local = (world - pos) @ rot
+    under = ((local[:, 0] >= BLADE_X[0]) & (local[:, 0] <= BLADE_X[1]) & (np.abs(local[:, 1]) <= BLADE_SIZE[1] / 2))
+    gap = BLADE_UNDER - local[:, 2]
+    touching = under & (gap <= CONTACT_TOL) & (gap >= -SINK_TOL)
+    return bool(touching.sum() >= len(_PATCH_XY) // 4)
 
 
 _PATCH_XY = np.array([[x, y] for x in np.linspace(PATCH_X[0] + 0.01, PATCH_X[1] - 0.01, 6)
@@ -367,6 +414,10 @@ class MortarLedger:
     frozen: bool = False  # the brick has started into the pocket: no more mortar counts
     steps: int = 0
     full_steps: int = 0
+    edge: int = -1  # the last step's lowest edge, its points and which of them touched the bed
+    edge_points: Any = None
+    edge_touch: Any = None
+    tilt: float = 0.0  # the last step's blade tilt (rad), for the record
 
     @property
     def coverage(self) -> float:
@@ -376,15 +427,20 @@ class MortarLedger:
         self.steps += 1
         if brick_in:
             self.frozen = True
-        if blade_cells(trowel_pos, trowel_rot, _PATCH_XY, BOARD_TOP).sum() >= len(_PATCH_XY) // 4:
-            self.load = LOAD_CELLS  # the blade dragged flat through the mortar
-        if self.frozen or self.load <= 0:
-            return
-        new = blade_cells(trowel_pos, trowel_rot, BED_CELL_XY, BED) & ~self.bed
-        if new.any():
-            take = np.flatnonzero(new)[: self.load]
-            self.bed[take] = True
-            self.load -= len(take)
+        if loads_from_board(trowel_pos, trowel_rot):
+            self.load = LOAD_CELLS
+        self.tilt = blade_tilt(trowel_rot)
+        edge, points = lowest_edge(trowel_pos, trowel_rot)
+        touch = on_bed(points) & (MIN_EDGE_TILT <= self.tilt <= MAX_EDGE_TILT)
+        if not self.frozen and self.load > 0 and edge == self.edge and self.edge_points is not None:
+            slid = np.linalg.norm(points[:, :2] - self.edge_points[:, :2], axis=1) >= MIN_SLIDE
+            laying = touch & self.edge_touch & slid
+            new = swept_cells(self.edge_points[laying], points[laying], BED_CELL_XY) & ~self.bed
+            if new.any():
+                take = np.flatnonzero(new)[: self.load]
+                self.bed[take] = True
+                self.load -= len(take)
+        self.edge, self.edge_points, self.edge_touch = edge, points, touch
 
 
 def mortar_share(coverage: float) -> float:
@@ -688,9 +744,19 @@ TROWEL_DROOP = math.radians(2.0)  # held by its handle's sides, the blade droops
 TROWEL_ROLL = math.radians(6.0)  # held, the blade also leans about 6 deg across its width (its +y edge low, probes
 # 41-45), dragging that edge on the bed; the hand turns this much about the handle to level it
 BLADE_CLEAR = 0.010  # the blade's height above the bed while it slides in or out of the pocket
-BED_PRESS = -0.005  # over the pocket's bed the blade rides 5 mm above it, inside the 10 mm joint: resting on the
-# bed, its edge caught as it moved and twisted the trowel in the grip (probe 40)
-SPREAD_Y = (-0.07, 0.07)  # the blade's centre runs along the pocket between these (y): its 70 mm reach both ends
+# Spreading: two strokes along the pocket, each with the blade tilted EDGE_TILT across its width, its trailing (lower)
+# edge pressed on the bed and its leading edge raised, as a mason or plasterer spreads. The first runs from the
+# pocket's right end toward its left with the -y edge down, the second from the left end back with the +y edge down;
+# a tilted blade's low edge can only reach one end of the pocket, so the two strokes overlap in the middle. 10 deg
+# keeps the hand nearest the handle's axis at the left end, clear of the replacement brick on its board.
+EDGE_TILT = math.radians(10.0)
+EDGE_PRESS = 0.002  # the low edge commanded this far below the bed, so it presses on it
+EDGE_LIFT = 0.008  # the low edge held this far above the bed while the blade tips the other way
+EDGE_END = POCKET_HALF - 0.004  # the low edge starts each stroke 4 mm from the pocket's end
+LEFT_ALLOW = 0.009  # starting the second stroke, the trowel sits about 9.5 mm right of where the hand is
+# commanded, so the hand is commanded this much further left there
+STROKE_PITCH = math.radians(1.0)  # pressed on its edge the blade sat 1 deg tip-up, its edge 1.5 mm off the bed at the
+# pocket's back (probe 50): while spreading the hand tilts that much less
 SPREAD_YAW = 0.0  # the trowel held straight (turning it about the vertical twisted it out of the grip, probe 29)
 GRIP_SPREAD = 0.065  # each arm holds the brick this far from its centre (32 mm in from its ends)
 LIFT = 0.010  # the brick's bottom is carried this far above the pocket's bed
@@ -802,6 +868,18 @@ def demo() -> dict[str, list[Waypoint]]:
         plan.move(duration, label, right=((float(tcp[0]), float(tcp[1]), z), finger,
                                           SideGrip("y", pitch=pitch, yaw=yaw, roll=TROWEL_ROLL if held else 0.0)))
 
+    def tilted(duration: float, label: str, blade_x: float, edge_y: float, edge_z: float, tilt: float) -> None:
+        """Held, the blade turned ``tilt`` rad about the trowel's length (positive: its -y edge down), with the middle
+        of its lower edge at (edge_y, edge_z) and its centre at blade_x along the trowel."""
+        side = -1.0 if tilt >= 0 else 1.0  # which edge is down
+        w = BLADE_SIZE[1] / 2
+        edge_off_y = side * w * math.cos(tilt) - BLADE_UNDER * math.sin(tilt)  # from the handle's axis
+        edge_off_z = side * w * math.sin(tilt) + BLADE_UNDER * math.cos(tilt)
+        axis_y, axis_z = edge_y - edge_off_y, edge_z - edge_off_z
+        tcp_x = blade_x - to_blade + (TROWEL_GRIP_DEPTH - PAD_TIP_PAST_TCP)
+        plan.move(duration, label, right=((tcp_x, axis_y, axis_z + TROWEL_SAG), FINGER_CLOSED,
+                                          SideGrip("y", pitch=-TROWEL_DROOP + STROKE_PITCH, roll=TROWEL_ROLL + tilt)))
+
     at_rest = TROWEL_START[2] - 0.001 + BLADE_UNDER
     trowel(2.0, "above the trowel", blade0 - 0.05, ty, high - 0.05, FINGER_OPEN, held=False)
     trowel(1.5, "in front of the handle", blade0 - 0.05, ty, at_rest, FINGER_OPEN, held=False)
@@ -826,11 +904,15 @@ def demo() -> dict[str, list[Waypoint]]:
     # middle (drawn out at the pocket's end, the blade's edge would sweep the replacement brick's end, probe 32).
     trowel(1.0, "down in front of it", out_x, 0.0, BED + BLADE_CLEAR, FINGER_CLOSED, yaw=SPREAD_YAW)
     trowel(2.0, "slide the blade in", in_x, 0.0, BED + BLADE_CLEAR, FINGER_CLOSED, yaw=SPREAD_YAW)
-    trowel(1.0, "down to the bed", in_x, 0.0, BED - BED_PRESS, FINGER_CLOSED, yaw=SPREAD_YAW)
-    trowel(2.0, "spread to one end", in_x, SPREAD_Y[0], BED - BED_PRESS, FINGER_CLOSED, yaw=SPREAD_YAW)
-    trowel(3.5, "spread to the other end", in_x, SPREAD_Y[1], BED - BED_PRESS, FINGER_CLOSED, yaw=SPREAD_YAW)
-    trowel(2.0, "back to the middle", in_x, 0.0, BED - BED_PRESS, FINGER_CLOSED, yaw=SPREAD_YAW)
-    trowel(0.8, "lift off the bed", in_x, 0.0, BED + BLADE_CLEAR, FINGER_CLOSED, yaw=SPREAD_YAW)
+    span = 2 * (BLADE_SIZE[1] / 2) * math.cos(EDGE_TILT)  # the tilted blade's width across the pocket
+    tilted(1.5, "tip it, over the right end", in_x, -EDGE_END, BED + EDGE_LIFT, EDGE_TILT)
+    tilted(0.8, "edge down on the bed", in_x, -EDGE_END, BED - EDGE_PRESS, EDGE_TILT)
+    tilted(3.5, "spread toward the left", in_x, EDGE_END - span, BED - EDGE_PRESS, EDGE_TILT)
+    tilted(0.6, "lift the edge", in_x, EDGE_END - span, BED + EDGE_LIFT, EDGE_TILT)
+    tilted(1.2, "tip it the other way, over the left end", in_x, EDGE_END + LEFT_ALLOW, BED + EDGE_LIFT, -EDGE_TILT)
+    tilted(0.8, "edge down on the bed", in_x, EDGE_END + LEFT_ALLOW, BED - EDGE_PRESS, -EDGE_TILT)
+    tilted(3.5, "spread toward the right", in_x, -(EDGE_END - span), BED - EDGE_PRESS, -EDGE_TILT)
+    trowel(1.2, "lift off the bed", in_x, 0.0, BED + BLADE_CLEAR, FINGER_CLOSED, yaw=SPREAD_YAW)
     trowel(1.5, "out of the pocket", out_x, 0.0, BED + BLADE_CLEAR, FINGER_CLOSED, yaw=SPREAD_YAW)
     # Back along the front, the blade's tip 4 cm in front of the wall, to in front of the board, then forward over
     # it: the straight line from the pocket runs the tip into the wall's end (probe 40).
