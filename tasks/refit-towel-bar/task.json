@@ -1,0 +1,21 @@
+{
+  "title": "Refit a spring-loaded towel bar by compressing its spring post and seating both ends in their brackets",
+  "category": "Societal relatability",
+  "keywords": [
+    "bimanual",
+    "spring mechanism",
+    "towel bar",
+    "bathroom fixture",
+    "compress and slide",
+    "bracket channel"
+  ],
+  "instruction": "Mount the towel bar between the two wall brackets.",
+  "context": "Spring-loaded towel bars are found in nearly every hotel, dormitory and rental bathroom; refitting one after it falls is an experience most adults share. Both hands grip the bar and move it as a unit: they push it toward one bracket to compress the spring post, then without releasing the compression slide the entire assembly sideways so the opposite end drops into its channel at bracket height. Releasing lets the spring extend the post into the first channel, clamping the bar. The difficulty is in the hands: coordinating a 60 mm push against a 250 N/m spring with an 84 mm lateral slide that must land the free end within a 50 mm channel opening, all while keeping the bar level within 5 degrees. Too far and the spring post pops free; too little and the free end misses.",
+  "setup": "Positions are centres in cm from the midpoint between the two arm bases on the table: x forward, y to the robot's left, heights above the table top. Wall panel (fixed): white painted rigid board, 35.0 cm wide, 25.0 cm tall, 2.0 cm thick, standing across the table with its front face at x 26.0, centred at y 0. Two bracket housings (fixed to the panel) protrude 5.6 cm forward from the wall face, channels opening inward: the left bracket centred at y +12.0, the right at y -12.0, both 10.0 cm above the table. Each bracket is a five-sided rectangular channel: 5.0 cm inner width, 5.0 cm inner height, 5.5 cm deep, 3 mm wall thickness; channel centre line at x 23.2. Chrome, friction 0.3. Towel bar (loose, 250 g): chrome-finished steel spring-tension bar, 22.0 cm long with a 1.8 x 1.8 cm square cross-section (a standard compact spring-tension closet rod or cupboard bar trimmed to span, or equal), lying flat on the table centred at x 15.0, y 0.0, axis along y. Spring post (jointed to the bar's left end, 40 g): chrome steel, 1.6 x 1.5 x 1.6 cm, on a prismatic slider along y with 4.0 cm travel and a 250 N/m spring (30 N s/m damping) pushing it outward; at rest fully extended, making the assembly 26.75 cm tip to tip, 22.75 cm when compressed. Bar and post friction 0.5. Nothing else is on the table. Layout is fixed.",
+  "scoring": "Measured at the end with a ruler and photos. The post tip is the outward (+y) face of the spring post; the right end is the outward (-y) face of the bar. An end is seated when it is at least 6 mm inside its bracket channel (from the opening toward the back wall), within 25 mm of the channel centre in x and z. The bar is level when its long axis is within 5 degrees of horizontal. Hands off: no finger pad within 4 cm of the bar centre or the post centre. Score: 0.25 (spring compressed) at any point during the trial, the spring extension is under half its maximum (under 20 mm) while both the post tip and the right end are within 4 cm of the bracket height and within 4 cm of the channel centre x. +0.25 (right end seated) the right end is at least 6 mm inside the right channel. +0.25 (both seated) both ends seated simultaneously and the bar is level. +0.25 (stable and clear) both ends remain seated for 1 continuous second with bar speed under 3 mm/s and rotation under 3 deg/s, and both hands are clear.",
+  "run_limit": "2,400 steps (2 minutes at 20 Hz)",
+  "reset_notes": "Return the bar to its starting position on the table (centre at x 15.0, y 0.0, lying flat, axis along y). Allow the spring post to extend fully. Nothing is consumed or degraded.",
+  "fidelity": "Rigid bodies. The wall panel and bracket housings are one kinematic body. The towel bar is a free dynamic body. The spring post is a second dynamic body on a prismatic slider joint with a 250 N/m linear spring and 30 N s/m damping driving it outward. Contact between the bar ends and channel walls provides guidance and clamping. Spring rate 250 N/m (assumed, not measured from a specific product; real bars range roughly 100-400 N/m). Solver iterations 64 position, 8 velocity.",
+  "scores": "Dream-1 run: 0.0; demo: 1.0",
+  "media": "M-2WLNAT"
+}
